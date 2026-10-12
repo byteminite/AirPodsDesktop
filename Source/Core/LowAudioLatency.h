@@ -25,6 +25,8 @@
 #include <QMediaPlayer>
 #include <QTimer>
 
+#include "LowAudioLatencyPolicy.h"
+
 using namespace std::chrono_literals;
 
 namespace Core::LowAudioLatency {
@@ -42,17 +44,27 @@ Q_SIGNALS:
     void SetDeviceConnectedSafely(bool connected);
 
 private:
+    // Time to let a freshly (re)connected A2DP endpoint settle before grabbing it, and how long to
+    // ride out a disconnect before releasing the stream. See `Policy`'s class comment.
+    constexpr static inline auto kSettleDelay = 2s;
+    constexpr static inline auto kGraceDelay = 5s;
     constexpr static inline auto kRetryInterval = 30s;
+
     std::unique_ptr<QMediaPlayer> _mediaPlayer;
     std::unique_ptr<QAudioOutput> _audioOutput;
     QTimer _initTimer;
-    bool _inited{false}, _enabled{false}, _deviceConnected{false};
+    QTimer _settleTimer;
+    QTimer _graceTimer;
+    QTimer _retryTimer;
+    Policy _policy;
+    bool _inited{false};
 
     bool Initialize();
     bool StartWhenReady();
     void ResetAudio();
     void Control(bool enable);
     void SetDeviceConnected(bool connected);
+    void Execute(Policy::Action action);
 
     void Start();
     void Stop();

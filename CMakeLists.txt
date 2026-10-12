@@ -336,6 +336,7 @@ set(
     "Source/Core/Settings.cpp"
     "Source/Core/SettingsRepository.cpp"
     "Source/Core/LowAudioLatency.cpp"
+    "Source/Core/LowAudioLatencyPolicy.cpp"
 )
 
 set(

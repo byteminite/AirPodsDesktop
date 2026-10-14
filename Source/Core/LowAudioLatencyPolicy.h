@@ -63,6 +63,12 @@ private:
     bool _enabled{false};
     bool _connected{false};
     bool _fastRetryUsed{false};
+    // Whether the retry currently pending (if any) is the slow one. A successful fast retry
+    // leaves the "used" fast-retry allowance spent, so a flaky endpoint that keeps erroring every
+    // few seconds degrades to the slow cadence instead of hammering it every settle delay forever.
+    // Only a slow retry succeeding - meaning things were unstable for a while and have now settled
+    // - earns the connection a fresh fast retry for the next, unrelated problem.
+    bool _pendingRetryIsSlow{false};
     State _state{State::Idle};
 };
 

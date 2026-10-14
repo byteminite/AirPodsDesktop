@@ -792,6 +792,36 @@ void AirPodsDomainTests::ConvertsTaskbarGeometryAcrossDpiBoundaries()
 
 using Core::LowAudioLatency::Policy;
 
+namespace QTest {
+
+// QCOMPARE's failure path needs to render both sides; without this, an unregistered custom enum
+// falls back to undocumented generic handling instead of a readable name.
+template <>
+inline char *toString(const Policy::Action &action)
+{
+    switch (action) {
+    case Policy::Action::None:
+        return qstrdup("None");
+    case Policy::Action::CancelPending:
+        return qstrdup("CancelPending");
+    case Policy::Action::Start:
+        return qstrdup("Start");
+    case Policy::Action::Release:
+        return qstrdup("Release");
+    case Policy::Action::ScheduleSettle:
+        return qstrdup("ScheduleSettle");
+    case Policy::Action::ScheduleGrace:
+        return qstrdup("ScheduleGrace");
+    case Policy::Action::ScheduleFastRetry:
+        return qstrdup("ScheduleFastRetry");
+    case Policy::Action::ScheduleSlowRetry:
+        return qstrdup("ScheduleSlowRetry");
+    }
+    return qstrdup("Unknown");
+}
+
+} // namespace QTest
+
 void AirPodsDomainTests::LowAudioLatencyWaitsOutSettleDelayBeforeStarting()
 {
     Policy policy;
@@ -878,7 +908,9 @@ void AirPodsDomainTests::LowAudioLatencyDisablingReleasesImmediately()
     QCOMPARE(policy.OnSettleElapsed(), Policy::Action::Start);
 
     QCOMPARE(policy.SetEnabled(false), Policy::Action::Release);
-    // Nothing left pending: re-enabling without a connected device does nothing yet.
+
+    // The device drops while the feature is off; re-enabling now has nothing connected to start.
+    QCOMPARE(policy.SetDeviceConnected(false), Policy::Action::None);
     QCOMPARE(policy.SetEnabled(true), Policy::Action::None);
 }
 

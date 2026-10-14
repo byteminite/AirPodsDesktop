@@ -117,8 +117,10 @@ Policy::Action Policy::OnPlaybackError()
 
     if (!_fastRetryUsed) {
         _fastRetryUsed = true;
+        _pendingRetryIsSlow = false;
         return Action::ScheduleFastRetry;
     }
+    _pendingRetryIsSlow = true;
     return Action::ScheduleSlowRetry;
 }
 
@@ -132,7 +134,9 @@ Policy::Action Policy::OnRetryElapsed()
         return Action::None;
     }
     _state = State::Running;
-    _fastRetryUsed = false;
+    if (_pendingRetryIsSlow) {
+        _fastRetryUsed = false;
+    }
     return Action::Start;
 }
 

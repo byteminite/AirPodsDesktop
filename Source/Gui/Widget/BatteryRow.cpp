@@ -146,7 +146,8 @@ void BatteryRow::paintEvent(QPaintEvent *event)
     const QRectF barRect{
         barLeft, (rowHeight - kBarHeight) / 2.0, qMax(barRight - barLeft, 0.0),
         qreal{kBarHeight}};
-    const QRectF valueRect{width() - kValueColumnWidth, 0, qreal{kValueColumnWidth}, rowHeight};
+    const QRectF valueRect{
+        static_cast<qreal>(width() - kValueColumnWidth), 0.0, qreal{kValueColumnWidth}, rowHeight};
 
     QTextOption leftAlign;
     leftAlign.setAlignment(Qt::AlignLeft | Qt::AlignVCenter);

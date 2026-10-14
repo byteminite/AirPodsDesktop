@@ -296,7 +296,7 @@ std::optional<QImage> TrayIcon::GenerateIcon(
         // A tray icon is ~16px: digits on a badge were unreadable there, so show the lowest pod's
         // level as a small battery bar under a slightly smaller glyph (F003). The exact
         // percentage is in the tooltip and the tray menu.
-        const int barHeight = std::max(2, qRound(size * 0.14));
+        const int barHeight = std::max(3, qRound(size * 0.19));
         const int glyphSize = size - barHeight - std::max(1, qRound(size * 0.08));
         painter.drawImage(
             (size - glyphSize) / 2, 0, TintedSvgImage(kTrayGlyph, glyph, glyphSize, 1.0));

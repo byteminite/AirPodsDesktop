@@ -9,6 +9,7 @@
 
 #include <Config.h>
 #include "Source/Core/AirPods.h"
+#include "Source/Core/LowAudioLatencyPolicy.h"
 #include "Source/Core/Settings.h"
 #include "Source/Core/SettingsRepository.h"
 #include "Source/Core/Update.h"
@@ -180,6 +181,14 @@ private Q_SLOTS:
     void PresentsMainWindowCaseBattery();
     void MapsMainWindowAnimationResources();
     void ConvertsTaskbarGeometryAcrossDpiBoundaries();
+    void LowAudioLatencyWaitsOutSettleDelayBeforeStarting();
+    void LowAudioLatencyCancelsStartIfDisconnectedDuringSettle();
+    void LowAudioLatencyRidesOutShortDisconnectWithoutRestarting();
+    void LowAudioLatencyReleasesAfterGraceExpires();
+    void LowAudioLatencyAbandonsRetryIfDisconnectedWhileRetryPending();
+    void LowAudioLatencyRetriesQuicklyOnceThenFallsBackToSlowRetry();
+    void LowAudioLatencyDisablingReleasesImmediately();
+    void LowAudioLatencyEnablingWhileAlreadyConnectedStartsImmediately();
 };
 
 void AirPodsDomainTests::RejectsMalformedPackets()
@@ -771,6 +780,148 @@ void AirPodsDomainTests::ConvertsTaskbarGeometryAcrossDpiBoundaries()
         Gui::TaskbarGeometry::CalculateLayout(QSize{50, 1440}, QRect{0, 120, 50, 1270}, 120, false);
     QCOMPARE(vertical.statusLogical, QRect(0, 1112, 40, 40));
     QCOMPARE(vertical.taskButtonsNative, QRect(0, 120, 50, 1270));
+}
+
+//////////////////////////////////////////////////
+// LowAudioLatency::Policy
+//
+// The Bluetooth "connected" notification arrives before the A2DP endpoint is actually usable, so
+// grabbing the keep-alive stream immediately races Windows (and other apps) rebuilding it. These
+// cover the settle/grace/retry timing the policy decides, independent of the real QMediaPlayer.
+//
+
+using Core::LowAudioLatency::Policy;
+
+namespace QTest {
+
+// QCOMPARE's failure path needs to render both sides; without this, an unregistered custom enum
+// falls back to undocumented generic handling instead of a readable name.
+template <>
+inline char *toString(const Policy::Action &action)
+{
+    switch (action) {
+    case Policy::Action::None:
+        return qstrdup("None");
+    case Policy::Action::CancelPending:
+        return qstrdup("CancelPending");
+    case Policy::Action::Start:
+        return qstrdup("Start");
+    case Policy::Action::Release:
+        return qstrdup("Release");
+    case Policy::Action::ScheduleSettle:
+        return qstrdup("ScheduleSettle");
+    case Policy::Action::ScheduleGrace:
+        return qstrdup("ScheduleGrace");
+    case Policy::Action::ScheduleFastRetry:
+        return qstrdup("ScheduleFastRetry");
+    case Policy::Action::ScheduleSlowRetry:
+        return qstrdup("ScheduleSlowRetry");
+    }
+    return qstrdup("Unknown");
+}
+
+} // namespace QTest
+
+void AirPodsDomainTests::LowAudioLatencyWaitsOutSettleDelayBeforeStarting()
+{
+    Policy policy;
+
+    QCOMPARE(policy.SetEnabled(true), Policy::Action::None); // not connected yet
+    QCOMPARE(policy.SetDeviceConnected(true), Policy::Action::ScheduleSettle);
+    QCOMPARE(policy.OnSettleElapsed(), Policy::Action::Start);
+}
+
+void AirPodsDomainTests::LowAudioLatencyCancelsStartIfDisconnectedDuringSettle()
+{
+    Policy policy;
+    policy.SetEnabled(true);
+
+    QCOMPARE(policy.SetDeviceConnected(true), Policy::Action::ScheduleSettle);
+    QCOMPARE(policy.SetDeviceConnected(false), Policy::Action::CancelPending);
+
+    // A settle timer that fires after the disconnect was already handled must not start the
+    // stream for a device that is no longer there.
+    QCOMPARE(policy.OnSettleElapsed(), Policy::Action::None);
+}
+
+void AirPodsDomainTests::LowAudioLatencyRidesOutShortDisconnectWithoutRestarting()
+{
+    Policy policy;
+    policy.SetEnabled(true);
+    policy.SetDeviceConnected(true);
+    QCOMPARE(policy.OnSettleElapsed(), Policy::Action::Start);
+
+    QCOMPARE(policy.SetDeviceConnected(false), Policy::Action::ScheduleGrace);
+    // Reconnecting inside the grace window must not tear the stream down and reopen it.
+    QCOMPARE(policy.SetDeviceConnected(true), Policy::Action::CancelPending);
+    QCOMPARE(policy.OnGraceElapsed(), Policy::Action::None); // stale timer, grace already cancelled
+}
+
+void AirPodsDomainTests::LowAudioLatencyReleasesAfterGraceExpires()
+{
+    Policy policy;
+    policy.SetEnabled(true);
+    policy.SetDeviceConnected(true);
+    QCOMPARE(policy.OnSettleElapsed(), Policy::Action::Start);
+
+    QCOMPARE(policy.SetDeviceConnected(false), Policy::Action::ScheduleGrace);
+    QCOMPARE(policy.OnGraceElapsed(), Policy::Action::Release);
+}
+
+void AirPodsDomainTests::LowAudioLatencyAbandonsRetryIfDisconnectedWhileRetryPending()
+{
+    Policy policy;
+    policy.SetEnabled(true);
+    policy.SetDeviceConnected(true);
+    QCOMPARE(policy.OnSettleElapsed(), Policy::Action::Start);
+    QCOMPARE(policy.OnPlaybackError(), Policy::Action::ScheduleFastRetry);
+
+    // The device drops while we are waiting to retry; don't retry a device that is gone, and a
+    // stale retry timer firing afterwards must stay a no-op.
+    QCOMPARE(policy.SetDeviceConnected(false), Policy::Action::CancelPending);
+    QCOMPARE(policy.OnRetryElapsed(), Policy::Action::None);
+}
+
+void AirPodsDomainTests::LowAudioLatencyRetriesQuicklyOnceThenFallsBackToSlowRetry()
+{
+    Policy policy;
+    policy.SetEnabled(true);
+    policy.SetDeviceConnected(true);
+    QCOMPARE(policy.OnSettleElapsed(), Policy::Action::Start);
+
+    QCOMPARE(policy.OnPlaybackError(), Policy::Action::ScheduleFastRetry);
+    QCOMPARE(policy.OnRetryElapsed(), Policy::Action::Start);
+
+    // A second failure in the same session no longer gets the fast retry.
+    QCOMPARE(policy.OnPlaybackError(), Policy::Action::ScheduleSlowRetry);
+    QCOMPARE(policy.OnRetryElapsed(), Policy::Action::Start);
+
+    // Once it is running cleanly again, a later failure earns a fast retry again.
+    QCOMPARE(policy.OnPlaybackError(), Policy::Action::ScheduleFastRetry);
+}
+
+void AirPodsDomainTests::LowAudioLatencyDisablingReleasesImmediately()
+{
+    Policy policy;
+    policy.SetEnabled(true);
+    policy.SetDeviceConnected(true);
+    QCOMPARE(policy.OnSettleElapsed(), Policy::Action::Start);
+
+    QCOMPARE(policy.SetEnabled(false), Policy::Action::Release);
+
+    // The device drops while the feature is off; re-enabling now has nothing connected to start.
+    QCOMPARE(policy.SetDeviceConnected(false), Policy::Action::None);
+    QCOMPARE(policy.SetEnabled(true), Policy::Action::None);
+}
+
+void AirPodsDomainTests::LowAudioLatencyEnablingWhileAlreadyConnectedStartsImmediately()
+{
+    Policy policy;
+
+    QCOMPARE(policy.SetDeviceConnected(true), Policy::Action::None); // disabled, ignored
+    // The device was already connected and stable before the feature was turned on, so there is no
+    // fresh-connect race to wait out.
+    QCOMPARE(policy.SetEnabled(true), Policy::Action::Start);
 }
 
 QTEST_GUILESS_MAIN(AirPodsDomainTests)

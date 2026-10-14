@@ -518,6 +518,14 @@ void MainWindow::ApplyTheme()
                 colors.mainAccentBgHover.name(), colors.mainAccentBgPressed.name()));
 
     _closeButton->update();
+    RefreshBackdrop();
+}
+
+void MainWindow::RefreshBackdrop()
+{
+    // A no-op (and returns false) until the native window handle exists, i.e. before the first
+    // show(); `showEvent` calls this again once it does.
+    _hasFrostedBackdrop = Theme::Manager::Instance().ApplyPopupBackdrop(this);
     update();
 }
 
@@ -525,11 +533,14 @@ void MainWindow::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event);
 
+    const auto &colors = Theme::Manager::Instance().Colors();
+
     QPainter painter{this};
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setPen(Qt::NoPen);
-    painter.setBrush(Theme::Manager::Instance().Colors().mainSurface);
-    painter.drawRoundedRect(QRectF{rect()}, _windowCornerRadius, _windowCornerRadius);
+    painter.setBrush(_hasFrostedBackdrop ? colors.mainGlassTint : colors.mainSurface);
+    const auto radius = _hasFrostedBackdrop ? _windowCornerRadiusGlass : _windowCornerRadiusSolid;
+    painter.drawRoundedRect(QRectF{rect()}, radius, radius);
 }
 
 void MainWindow::FitDeviceLabelFont(const QString &text)
@@ -621,6 +632,9 @@ void MainWindow::DoHide()
 void MainWindow::showEvent(QShowEvent *event)
 {
     QDialog::showEvent(event);
+    // The native window handle only exists once shown; `ApplyTheme()` tried this already in the
+    // constructor and silently no-opped.
+    RefreshBackdrop();
     BeginShow(true);
 }
 

@@ -60,7 +60,9 @@ struct Palette {
     QColor popupSurface, popupBorder;
 
     // Main window (iOS card)
-    QColor mainSurface, mainText, mainTextSecondary;
+    // `mainSurface` is the opaque fallback for Windows 10 or when the backdrop call fails;
+    // `mainGlassTint` is what the popup paints over the Windows 11 frosted backdrop instead.
+    QColor mainSurface, mainGlassTint, mainText, mainTextSecondary;
     QColor mainCloseBg, mainCloseHover, mainClosePressed, mainCloseGlyph;
     QColor batteryBorder, batteryNormal, batteryAlarm, batteryTrack;
 
@@ -100,6 +102,12 @@ public:
 
     void ApplyToApplication();
     void ApplyToWindow(QWidget *topLevel);
+
+    // Gives the AirPods popup a Windows 11 system backdrop (frosted glass) and matching small
+    // rounded corners. Returns whether it actually applied - Windows 10, a missing native window
+    // handle (not shown yet), or any DWM failure all return `false`, and the caller should paint
+    // its normal opaque surface instead of the translucent glass tint.
+    bool ApplyPopupBackdrop(QWidget *popup);
 
 Q_SIGNALS:
     void Changed();

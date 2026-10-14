@@ -51,6 +51,10 @@ constexpr DWORD kDwmwaUseImmersiveDarkModeBefore20H1 = 19;
 constexpr DWORD kDwmwaUseImmersiveDarkMode = 20;
 constexpr DWORD kDwmwaWindowCornerPreference = 33;
 constexpr DWORD kDwmwcpRoundSmall = 3;
+constexpr DWORD kDwmwaSystemBackdropType = 38;
+// The "transient window" material: Windows' own choice for flyouts and context menus, matching
+// how the AirPods popup behaves (auto-hiding, not a persistent app window).
+constexpr DWORD kDwmsbtTransientWindow = 4;
 #endif
 
 constexpr auto kDefaultAccent = "#0067C0";
@@ -249,6 +253,7 @@ Palette BuildPalette(const SystemTheme &system)
         p.popupBorder = QColor{"#C7C7CC"};
 
         p.mainSurface = QColor{"#FFFFFF"};
+        p.mainGlassTint = QColor{246, 246, 248, 184}; // rgba(246,246,248,.72)
         p.mainText = QColor{"#1B1B1B"};
         p.mainTextSecondary = QColor{"#5E5E5E"};
         p.mainCloseBg = QColor{"#EEEEEF"};
@@ -277,6 +282,7 @@ Palette BuildPalette(const SystemTheme &system)
         p.popupBorder = QColor{"#545458"};
 
         p.mainSurface = QColor{"#1C1C1E"};
+        p.mainGlassTint = QColor{30, 30, 32, 184}; // rgba(30,30,32,.72)
         p.mainText = QColor{"#F2F2F7"};
         p.mainTextSecondary = QColor{"#A1A1A6"};
         p.mainCloseBg = QColor{"#2C2C2E"};
@@ -979,6 +985,43 @@ void Manager::ApplyToWindow(QWidget *topLevel)
         DWORD preference = kDwmwcpRoundSmall;
         DwmSetWindowAttribute(hwnd, kDwmwaWindowCornerPreference, &preference, sizeof(preference));
     }
+#endif
+}
+
+bool Manager::ApplyPopupBackdrop(QWidget *popup)
+{
+#if defined APD_OS_WIN
+    if (popup == nullptr || !popup->isWindow() || !Core::OS::Windows::System::Is11OrGreater()) {
+        return false;
+    }
+
+    auto *window = popup->windowHandle();
+    if (window == nullptr) {
+        return false;
+    }
+
+    const auto hwnd = reinterpret_cast<HWND>(window->winId());
+    if (hwnd == nullptr) {
+        return false;
+    }
+
+    // Keep the backdrop's own chrome (and any system-drawn shadow) in step with the app's chosen
+    // mode rather than the raw system setting, the same as every other top-level window.
+    BOOL dark = _impl->palette.dark ? TRUE : FALSE;
+    if (FAILED(DwmSetWindowAttribute(hwnd, kDwmwaUseImmersiveDarkMode, &dark, sizeof(dark)))) {
+        DwmSetWindowAttribute(hwnd, kDwmwaUseImmersiveDarkModeBefore20H1, &dark, sizeof(dark));
+    }
+
+    DWORD cornerPreference = kDwmwcpRoundSmall;
+    DwmSetWindowAttribute(
+        hwnd, kDwmwaWindowCornerPreference, &cornerPreference, sizeof(cornerPreference));
+
+    DWORD backdropType = kDwmsbtTransientWindow;
+    return SUCCEEDED(
+        DwmSetWindowAttribute(hwnd, kDwmwaSystemBackdropType, &backdropType, sizeof(backdropType)));
+#else
+    Q_UNUSED(popup)
+    return false;
 #endif
 }
 

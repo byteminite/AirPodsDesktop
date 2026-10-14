@@ -76,7 +76,11 @@ Q_SIGNALS:
 private:
     constexpr static QSize _windowSize{320, 316};
     constexpr static QSize _screenMargin{24, 24};
-    constexpr static qreal _windowCornerRadius = 32.0;
+    // Fallback for Windows 10, or if the Windows 11 backdrop call fails: the original solid card.
+    constexpr static qreal _windowCornerRadiusSolid = 32.0;
+    // Windows 11's own small system radius, used once the frosted backdrop is actually active -
+    // DWM's corner clipping and shadow are tuned for this radius, not the solid card's.
+    constexpr static qreal _windowCornerRadiusGlass = 8.0;
     constexpr static int _deviceLabelMaximumPointSize = 18;
     constexpr static int _deviceLabelMinimumPointSize = 12;
 
@@ -98,6 +102,7 @@ private:
     ButtonAction _buttonAction{ButtonAction::NoButton};
     MainWindowViewModel _viewModel;
     bool _isVisible{false};
+    bool _hasFrostedBackdrop{false};
     std::atomic<bool> _deviceQueryRunning{false};
     std::jthread _deviceQueryThread;
 
@@ -111,6 +116,7 @@ private:
     void VersionUpdateAvailable(const Core::Update::ReleaseInfo &releaseInfo, bool silent);
     void Repaint();
     void ApplyTheme();
+    void RefreshBackdrop();
     void FitDeviceLabelFont(const QString &text);
 
     void OnAppStateChanged(Qt::ApplicationState state);

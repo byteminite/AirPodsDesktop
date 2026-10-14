@@ -17,11 +17,13 @@
 //
 
 #include "TrayIcon.h"
+
 #include "Theme.h"
 #include "TintedSvg.h"
 
 #include <QFont>
 #include <QApplication>
+#include <QCursor>
 #include <QPainter>
 #include <QSvgRenderer>
 
@@ -410,12 +412,15 @@ void TrayIcon::ExecuteTrayActivation(TrayActivationAction action)
     if (action == TrayActivationAction::ShowMainWindow) {
         ShowMainWindow();
     }
+    else if (action == TrayActivationAction::ShowMenu) {
+        ShowContextMenu(QCursor::pos());
+    }
 }
 
 void TrayIcon::OnQuickConnectOutcome(Core::QuickConnect::Outcome outcome, const QString &deviceName)
 {
-    // F005: results and problems show as the app's own banner instead of a Windows notification;
-    // "Connecting..." and "already connected" stay silent.
+    // F005: results and problems show as the app's own banner instead of a Windows notification.
+    // "Connecting..." stays silent; "already connected" shows the battery, if known.
     const auto content = QuickConnectBannerContentFor(
         outcome, deviceName,
         _status == Status::Updating ? _airPodsState : std::optional<Core::AirPods::State>{});

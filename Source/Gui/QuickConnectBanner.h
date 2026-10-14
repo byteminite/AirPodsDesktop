@@ -49,7 +49,7 @@ struct QuickConnectBannerContent {
 };
 
 // Maps a quick-connect outcome to banner content, or nullopt when it should stay silent
-// ("Connecting...", "already connected", "disabled"). `airPods` is the current state of the bound
+// ("Connecting...", "disabled"). "Already connected" reads like "Connected". `airPods` is the current state of the bound
 // AirPods, if they are reporting; it is used only when it names the device that connected.
 std::optional<QuickConnectBannerContent> QuickConnectBannerContentFor(
     Core::QuickConnect::Outcome outcome, const QString &deviceName,

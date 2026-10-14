@@ -712,11 +712,11 @@ void SettingsWindow::Retranslate()
     _ui.cardLowAudioLatency->Title()->setText(
         QCoreApplication::translate("SettingsWindow", "Low audio latency"));
     _ui.cardTrayQuickConnect->Title()->setText(QCoreApplication::translate(
-        "SettingsWindow", "Connect the selected device on a tray icon click"));
+        "SettingsWindow", "Connect the selected device on a tray icon double-click"));
     _ui.cardTrayQuickConnectDevice->Title()->setText(
         QCoreApplication::translate("SettingsWindow", "Device"));
     _ui.cardTrayQuickConnectDevice->Description()->setText(QCoreApplication::translate(
-        "SettingsWindow", "The paired Bluetooth audio device a tray icon click connects."));
+        "SettingsWindow", "The paired Bluetooth audio device a tray icon double-click connects."));
     _ui.cardTrayQuickConnectDevice->Description()->show();
     for (const auto &[card, checkBox] : {
              std::pair{_ui.cardLowAudioLatency, _ui.cbLowAudioLatency},

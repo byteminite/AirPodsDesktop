@@ -34,6 +34,7 @@
 #include "Source/Gui/QuickConnectBanner.h"
 #include "Source/Gui/SettingsWindow.h"
 #include "Source/Gui/Theme.h"
+#include "Source/Gui/TrayActivation.h"
 #include "Source/Gui/TrayIcon.h"
 #include "Source/Gui/UpdateWindow.h"
 #include "Source/Gui/Widget/BatteryRow.h"
@@ -1136,9 +1137,13 @@ private Q_SLOTS:
         airPods.pods.left.battery = 80;
 
         const auto name = airPods.displayName;
-        for (const auto silent : {Outcome::Disabled, Outcome::AlreadyConnected, Outcome::RequestStarted}) {
+        for (const auto silent : {Outcome::Disabled, Outcome::RequestStarted}) {
             QVERIFY(!Gui::QuickConnectBannerContentFor(silent, name, airPods).has_value());
         }
+        // Double-clicking an already connected device shows its battery, like a fresh connection.
+        QCOMPARE(
+            Gui::QuickConnectBannerContentFor(Outcome::AlreadyConnected, name, airPods),
+            Gui::QuickConnectBannerContentFor(Outcome::Connected, name, airPods));
 
         // Connected AirPods carry their state; another device, or no state yet, does not.
         auto connected = Gui::QuickConnectBannerContentFor(Outcome::Connected, name, airPods);
@@ -1254,6 +1259,70 @@ private Q_SLOTS:
         QVERIFY(!banner.isVisible());
 
         theme.SetMode(originalMode);
+    }
+
+    // Tray clicks (moved from QuickConnectTests: TrayActivation.h belongs to apd_gui). These drive
+    // the same TrayActivationState as TrayIcon, including the timer decision.
+    void singleClickOpensTrayMenuAfterTheDoubleClickInterval()
+    {
+        for (const bool quickConnectEnabled : {true, false}) {
+            Gui::TrayActivationState state;
+
+            const auto result = state.OnActivation(QSystemTrayIcon::Trigger, quickConnectEnabled);
+            QCOMPARE(result.action, Gui::TrayActivationAction::None);
+            QCOMPARE(result.timer, Gui::SingleClickTimer::Start);
+            QCOMPARE(state.OnSingleClickTimeout(), Gui::TrayActivationAction::ShowMenu);
+
+            // Only the first timeout counts.
+            QCOMPARE(state.OnSingleClickTimeout(), Gui::TrayActivationAction::None);
+        }
+    }
+
+    void doubleClickConnectsAndCancelsPendingMenu()
+    {
+        Gui::TrayActivationState state;
+
+        QCOMPARE(
+            state.OnActivation(QSystemTrayIcon::Trigger, true).action, Gui::TrayActivationAction::None);
+
+        const auto result = state.OnActivation(QSystemTrayIcon::DoubleClick, true);
+        QCOMPARE(result.action, Gui::TrayActivationAction::QuickConnect);
+        QCOMPARE(result.timer, Gui::SingleClickTimer::Stop);
+        QCOMPARE(state.OnSingleClickTimeout(), Gui::TrayActivationAction::None);
+    }
+
+    void doubleClickOpensMainWindowWhenQuickConnectIsDisabled()
+    {
+        Gui::TrayActivationState state;
+
+        state.OnActivation(QSystemTrayIcon::Trigger, false);
+        const auto result = state.OnActivation(QSystemTrayIcon::DoubleClick, false);
+        QCOMPARE(result.action, Gui::TrayActivationAction::ShowMainWindow);
+        QCOMPARE(result.timer, Gui::SingleClickTimer::Stop);
+        QCOMPARE(state.OnSingleClickTimeout(), Gui::TrayActivationAction::None);
+    }
+
+    // Right-clicking opens the menu itself; the pending single click must not open it again.
+    void contextMenuCancelsPendingQuickConnect()
+    {
+        Gui::TrayActivationState state;
+
+        QCOMPARE(
+            state.OnActivation(QSystemTrayIcon::Trigger, true).timer, Gui::SingleClickTimer::Start);
+
+        const auto result = state.OnActivation(QSystemTrayIcon::Context, true);
+        QCOMPARE(result.action, Gui::TrayActivationAction::None);
+        QCOMPARE(result.timer, Gui::SingleClickTimer::Stop);
+        QCOMPARE(state.OnSingleClickTimeout(), Gui::TrayActivationAction::None);
+    }
+
+    void unknownActivationDoesNothing()
+    {
+        Gui::TrayActivationState state;
+
+        const auto result = state.OnActivation(QSystemTrayIcon::Unknown, true);
+        QCOMPARE(result.action, Gui::TrayActivationAction::None);
+        QCOMPARE(result.timer, Gui::SingleClickTimer::Unchanged);
     }
 
     void SettingsDescriptionsFollowConsecutiveLanguageChanges()

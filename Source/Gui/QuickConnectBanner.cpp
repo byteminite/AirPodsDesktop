@@ -62,6 +62,8 @@ std::optional<QuickConnectBannerContent> QuickConnectBannerContentFor(
     // The strings are the ones the Windows notification used, so their translations carry over.
     switch (outcome) {
     case Outcome::Connected:
+    case Outcome::AlreadyConnected:
+        // Double-clicking an already connected device is how to check its battery.
         content.title = deviceName;
         content.text = QCoreApplication::translate("Gui::Widget::DeviceCard", "Connected");
         // Quick connect can target any paired headset; show AirPods battery only for them.
@@ -98,7 +100,6 @@ std::optional<QuickConnectBannerContent> QuickConnectBannerContentFor(
                 .arg(deviceName);
         return content;
     case Outcome::Disabled:
-    case Outcome::AlreadyConnected:
     case Outcome::RequestStarted:
         return std::nullopt;
     }

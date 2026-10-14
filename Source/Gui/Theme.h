@@ -62,7 +62,11 @@ struct Palette {
     // Main window (iOS card)
     QColor mainSurface, mainText, mainTextSecondary;
     QColor mainCloseBg, mainCloseHover, mainClosePressed, mainCloseGlyph;
-    QColor batteryBorder, batteryNormal, batteryAlarm;
+    QColor batteryBorder, batteryNormal, batteryAlarm, batteryTrack;
+
+    // F002: the popup's own "Bind to AirPods" button uses Apple's system blue rather than the
+    // Windows accent colour the rest of the app follows.
+    QColor mainAccentBg, mainAccentBgHover, mainAccentBgPressed, mainAccentText;
 
     bool operator==(const Palette &) const = default;
 };

@@ -34,7 +34,7 @@
 #include "../Core/AirPods.h"
 #include "../Core/Update.h"
 #include "Base.h"
-#include "Widget/Battery.h"
+#include "Widget/BatteryRow.h"
 #include "Widget/AnimationView.h"
 
 namespace Gui {
@@ -74,7 +74,7 @@ Q_SIGNALS:
     void SilentUpdateAvailable(const Core::Update::ReleaseInfo &releaseInfo);
 
 private:
-    constexpr static QSize _windowSize{320, 300};
+    constexpr static QSize _windowSize{320, 316};
     constexpr static QSize _screenMargin{24, 24};
     constexpr static qreal _windowCornerRadius = 32.0;
     constexpr static int _deviceLabelMaximumPointSize = 18;
@@ -87,9 +87,9 @@ private:
     AnimationPlayback *_playback;
     QTimer *_autoHideTimer = new QTimer{this};
     CloseButton *_closeButton;
-    Widget::Battery *_leftBattery = new Widget::Battery{this};
-    Widget::Battery *_rightBattery = new Widget::Battery{this};
-    Widget::Battery *_caseBattery = new Widget::Battery{this};
+    Widget::BatteryRow *_leftBattery = new Widget::BatteryRow{this};
+    Widget::BatteryRow *_rightBattery = new Widget::BatteryRow{this};
+    Widget::BatteryRow *_caseBattery = new Widget::BatteryRow{this};
 
     Core::Update::AsyncChecker _updateChecker{[this](auto &&...args) {
         VersionUpdateAvailableSafely(std::forward<decltype(args)>(args)...);

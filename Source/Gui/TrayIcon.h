@@ -67,7 +67,7 @@ Q_SIGNALS:
 
 private:
     struct IconRenderState {
-        std::optional<QString> text;
+        std::optional<Core::AirPods::Battery::ValueType> battery;
         bool showUpdateDot{false};
         // The glyph follows the taskbar, i.e. the Windows *system* theme, not the app's mode.
         bool systemDark{true};
@@ -101,7 +101,8 @@ private:
     void ApplyTheme();
 
     static std::optional<QImage> GenerateIcon(
-        int size, const QColor &glyph, const std::optional<QString> &optText,
+        int size, const QColor &glyph,
+        const std::optional<Core::AirPods::Battery::ValueType> &battery,
         const std::optional<QColor> &dot);
 
     void OnNewVersionClicked();

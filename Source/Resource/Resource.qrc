@@ -1,6 +1,14 @@
 <RCC>
     <qresource prefix="/Resource">
         <file>Image/Icon.svg</file>
+        <file>Image/TrayAirPods.svg</file>
+        <file>Image/Menu/AudioLines.svg</file>
+        <file>Image/Menu/BluetoothOff.svg</file>
+        <file>Image/Menu/Check.svg</file>
+        <file>Image/Menu/Download.svg</file>
+        <file>Image/Menu/Info.svg</file>
+        <file>Image/Menu/Power.svg</file>
+        <file>Image/Menu/Settings.svg</file>
         <file>Image/Animation/AirPods_1.png</file>
         <file>Image/Animation/AirPods_2.png</file>
         <file>Image/Animation/AirPods_3.png</file>

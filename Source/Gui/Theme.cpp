@@ -930,7 +930,9 @@ void ConfigurePopupSurface(QWidget *popup)
     popup->setAttribute(Qt::WA_TranslucentBackground);
     popup->setAutoFillBackground(false);
     popup->setProperty(Manager::kSkipDwmProperty, true);
-    if (qobject_cast<QMenu *>(popup) != nullptr) {
+    if (qobject_cast<QMenu *>(popup) != nullptr &&
+        !popup->property(kCustomSurfaceProperty).toBool())
+    {
         popup->installEventFilter(new MenuSurfacePaintFilter{popup});
     }
 }

@@ -24,6 +24,7 @@
 #include <QTimer>
 #include <QMenu>
 #include <QAction>
+#include <QWidgetAction>
 
 #include "../Core/AirPods.h"
 #include "../Core/QuickConnect.h"
@@ -31,6 +32,8 @@
 #include "Base.h"
 #include "TrayActivation.h"
 #include "SettingsWindow.h"
+#include "TrayMenu.h"
+#include "Widget/TrayBatteryHeader.h"
 
 namespace Gui {
 
@@ -66,12 +69,16 @@ private:
     struct IconRenderState {
         std::optional<QString> text;
         bool showUpdateDot{false};
+        // The glyph follows the taskbar, i.e. the Windows *system* theme, not the app's mode.
+        bool systemDark{true};
 
         bool operator==(const IconRenderState &rhs) const = default;
     };
 
     QSystemTrayIcon *_tray = new QSystemTrayIcon{this};
-    QMenu *_menu = new QMenu{this};
+    TrayMenu *_menu = new TrayMenu{this};
+    Widget::TrayBatteryHeader *_header = new Widget::TrayBatteryHeader;
+    QWidgetAction *_headerAction = new QWidgetAction{this};
     QAction *_actionNewVersion = new QAction{tr("New version available!"), this};
     QAction *_actionLowAudioLatency = new QAction{tr("Low audio latency (may cause hiss)"), this};
     QAction *_actionSettings = new QAction{tr("Settings"), this};
@@ -91,9 +98,11 @@ private:
     void ShowMainWindow();
     void Repaint();
     void ExecuteTrayActivation(TrayActivationAction action);
+    void ApplyTheme();
 
-    static std::optional<QImage>
-    GenerateIcon(int size, const std::optional<QString> &optText, const std::optional<QColor> &dot);
+    static std::optional<QImage> GenerateIcon(
+        int size, const QColor &glyph, const std::optional<QString> &optText,
+        const std::optional<QColor> &dot);
 
     void OnNewVersionClicked();
     void OnSettingsClicked();

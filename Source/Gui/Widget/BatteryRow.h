@@ -47,6 +47,7 @@ public:
     void SetLowColor(const QColor &color);
     void SetLowThreshold(ValueType percent);
     void SetUnavailableOpacity(qreal opacity);
+    void SetColumns(int labelWidth, int valueWidth, int gap);
 
     QString Label() const
     {
@@ -67,12 +68,14 @@ protected:
     void paintEvent(QPaintEvent *event) override;
 
 private:
-    static constexpr int kLabelColumnWidth = 48;
-    static constexpr int kValueColumnWidth = 56;
-    static constexpr int kColumnGap = 12;
     static constexpr int kBarHeight = 6;
     static constexpr int kChargingIconSize = 12;
     static constexpr int kRowHeight = 18;
+
+    // Defaults are the popup's grid; the tray menu header uses a tighter one.
+    int _labelWidth{48};
+    int _valueWidth{56};
+    int _columnGap{12};
 
     QString _label;
     std::optional<ValueType> _value;

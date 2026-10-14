@@ -22,6 +22,7 @@
 #include <QStyleOptionComboBox>
 #include <QThread>
 #include <QUrl>
+#include <QWidgetAction>
 #include <QTimer>
 #include <QPainter>
 
@@ -33,6 +34,7 @@
 #include "Source/Gui/TrayIcon.h"
 #include "Source/Gui/UpdateWindow.h"
 #include "Source/Gui/Widget/BatteryRow.h"
+#include "Source/Gui/Widget/TrayBatteryHeader.h"
 
 class UpdateUrlRecorder : public QObject
 {
@@ -905,6 +907,58 @@ private Q_SLOTS:
         theme.SetMode(originalMode);
         QCoreApplication::removeTranslator(&traditionalChinese);
         Gui::Theme::ApplyApplicationTypography(QLocale{"en_US"});
+    }
+
+    void TrayMenuShowsBatteryHeader()
+    {
+        auto backend = std::make_shared<Core::QuickConnect::NullBackend>();
+        Core::QuickConnect::Controller quickConnect{backend};
+        Gui::TrayIcon tray{[] { return 0; }, quickConnect};
+
+        auto *header = tray.findChild<Gui::Widget::TrayBatteryHeader *>("trayBatteryHeader");
+        QVERIFY(header != nullptr);
+        auto *status = header->findChild<QLabel *>("trayBatteryHeaderStatus");
+        QVERIFY(status != nullptr);
+
+        tray.Disconnect();
+        QVERIFY(header->IsShowingStatus());
+        QVERIFY(!status->text().isEmpty());
+
+        Core::AirPods::State state;
+        state.model = Core::AirPods::Model::AirPods_Pro_2;
+        state.displayName = QStringLiteral("Miha's AirPods Pro");
+        state.pods.left.battery = 15;
+        state.pods.right.battery = 60;
+        state.pods.right.isCharging = true;
+        tray.UpdateState(state);
+
+        QVERIFY(!header->IsShowingStatus());
+        QCOMPARE(
+            header->findChild<QLabel *>("trayBatteryHeaderName")->text(), state.displayName);
+        auto *left = header->findChild<Gui::Widget::BatteryRow *>("trayLeftBatteryRow");
+        auto *right = header->findChild<Gui::Widget::BatteryRow *>("trayRightBatteryRow");
+        auto *caseRow = header->findChild<Gui::Widget::BatteryRow *>("trayCaseBatteryRow");
+        QVERIFY(left != nullptr && right != nullptr && caseRow != nullptr);
+        QCOMPARE(left->Value(), std::optional<quint32>{15});
+        QVERIFY(!left->IsCharging());
+        QCOMPARE(right->Value(), std::optional<quint32>{60});
+        QVERIFY(right->IsCharging());
+        QVERIFY(!caseRow->Value().has_value());
+
+        // Every action keeps an icon, and the toggle stays checkable.
+        auto *menu = tray.findChild<QMenu *>();
+        for (auto *action : menu->actions()) {
+            if (action->isSeparator() || qobject_cast<QWidgetAction *>(action) != nullptr) {
+                continue;
+            }
+            QVERIFY2(!action->icon().isNull(), qPrintable(action->text()));
+        }
+
+        tray.ShowContextMenu(QPoint{100, 100});
+        QVERIFY(QTest::qWaitForWindowExposed(menu));
+        QVERIFY(menu->grab().save(QStringLiteral(APD_BINARY_DIR "/UiValidation/tray-menu-battery.png")));
+        QTest::keyClick(menu, Qt::Key_Escape);
+        QTRY_VERIFY(!menu->isVisible());
     }
 
     void TrayMenuHasSmoothCorners()

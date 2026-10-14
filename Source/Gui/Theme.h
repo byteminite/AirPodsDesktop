@@ -41,7 +41,10 @@ QStringList DisplayFontFamilies(const QLocale &locale);
 void ApplyApplicationTypography(const QLocale &locale);
 
 // Configure before the popup is first shown so its rounded surface can use per-pixel alpha.
+// Menus get the shared solid rounded surface painted for them unless they set
+// `kCustomSurfaceProperty` to `true` first and paint their own.
 void ConfigurePopupSurface(QWidget *popup);
+constexpr auto kCustomSurfaceProperty = "apdCustomSurface";
 
 //
 // Colour tokens for the whole application.

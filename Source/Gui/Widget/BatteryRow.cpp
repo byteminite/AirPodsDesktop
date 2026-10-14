@@ -123,6 +123,14 @@ void BatteryRow::SetUnavailableOpacity(qreal opacity)
     update();
 }
 
+void BatteryRow::SetColumns(int labelWidth, int valueWidth, int gap)
+{
+    _labelWidth = labelWidth;
+    _valueWidth = valueWidth;
+    _columnGap = gap;
+    update();
+}
+
 QSize BatteryRow::sizeHint() const
 {
     return QSize{200, kRowHeight};
@@ -140,14 +148,14 @@ void BatteryRow::paintEvent(QPaintEvent *event)
     }
 
     const qreal rowHeight = height();
-    const QRectF labelRect{0, 0, kLabelColumnWidth, rowHeight};
-    const qreal barLeft = kLabelColumnWidth + kColumnGap;
-    const qreal barRight = width() - kValueColumnWidth - kColumnGap;
+    const QRectF labelRect{0.0, 0.0, static_cast<qreal>(_labelWidth), rowHeight};
+    const qreal barLeft = _labelWidth + _columnGap;
+    const qreal barRight = width() - _valueWidth - _columnGap;
     const QRectF barRect{
         barLeft, (rowHeight - kBarHeight) / 2.0, qMax(barRight - barLeft, 0.0),
         qreal{kBarHeight}};
     const QRectF valueRect{
-        static_cast<qreal>(width() - kValueColumnWidth), 0.0, qreal{kValueColumnWidth}, rowHeight};
+        static_cast<qreal>(width() - _valueWidth), 0.0, static_cast<qreal>(_valueWidth), rowHeight};
 
     QTextOption leftAlign;
     leftAlign.setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
@@ -173,7 +181,7 @@ void BatteryRow::paintEvent(QPaintEvent *event)
     painter.setPen(_valueColor);
     if (_charging && _value.has_value()) {
         const QRectF boltRect{
-            valueRect.right() - kValueColumnWidth, (rowHeight - kChargingIconSize) / 2.0,
+            valueRect.right() - _valueWidth, (rowHeight - kChargingIconSize) / 2.0,
             qreal{kChargingIconSize}, qreal{kChargingIconSize}};
         DrawChargingBolt(painter, boltRect);
         const QRectF textRect{

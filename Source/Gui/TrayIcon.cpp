@@ -18,20 +18,28 @@
 
 #include "TrayIcon.h"
 #include "Theme.h"
+#include "TintedSvg.h"
 
 #include <QFont>
 #include <QApplication>
 #include <QPainter>
 #include <QSvgRenderer>
 
+#include <algorithm>
+
 #include <Config.h>
 namespace Gui {
+namespace {
+
+constexpr auto kTrayGlyph = ":/Resource/Image/TrayAirPods.svg";
+constexpr int kMenuIconSize = 16;
+
+} // namespace
 
 TrayIcon::TrayIcon(
     std::function<int()> getCurrentLocaleIndex, Core::QuickConnect::Controller &quickConnect)
     : _quickConnect{quickConnect}, _settingsWindow{std::move(getCurrentLocaleIndex), quickConnect}
 {
-    Theme::ConfigurePopupSurface(_menu);
     _singleClickTimer.setSingleShot(true);
     connect(&_singleClickTimer, &QTimer::timeout, this, [this] {
         ExecuteTrayActivation(_trayActivationState.OnSingleClickTimeout());
@@ -46,6 +54,9 @@ TrayIcon::TrayIcon(
     connect(_actionQuit, &QAction::triggered, qApp, &QApplication::quit, Qt::QueuedConnection);
     connect(_tray, &QSystemTrayIcon::activated, this, &TrayIcon::OnIconClicked);
     connect(_tray, &QSystemTrayIcon::messageClicked, this, &TrayIcon::ShowMainWindowRequested);
+    // "Bind to AirPods" on the Settings device card opens the popup, which lists the devices.
+    connect(
+        &_settingsWindow, &SettingsWindow::BindRequested, this, &TrayIcon::ShowMainWindowRequested);
     connect(
         &_quickConnect, &Core::QuickConnect::Controller::OutcomeChanged, this,
         &TrayIcon::OnQuickConnectOutcome);
@@ -58,8 +69,10 @@ TrayIcon::TrayIcon(
     _actionNewVersion->setVisible(false);
     _actionLowAudioLatency->setCheckable(true);
 
-    _menu->addAction(_actionNewVersion);
+    _headerAction->setDefaultWidget(_header);
+    _menu->addAction(_headerAction);
     _menu->addSeparator();
+    _menu->addAction(_actionNewVersion);
     _menu->addAction(_actionLowAudioLatency);
     _menu->addAction(_actionSettings);
     _menu->addSeparator();
@@ -69,6 +82,29 @@ TrayIcon::TrayIcon(
     _tray->setContextMenu(_menu);
     _tray->setIcon(qApp->windowIcon());
     _tray->show();
+
+    ApplyTheme();
+    connect(&Theme::Manager::Instance(), &Theme::Manager::Changed, this, &TrayIcon::ApplyTheme);
+}
+
+void TrayIcon::ApplyTheme()
+{
+    const auto &colors = Theme::Manager::Instance().Colors();
+    const std::pair<QAction *, const char *> icons[] = {
+        {_actionNewVersion, ":/Resource/Image/Menu/Download.svg"},
+        {_actionLowAudioLatency, ":/Resource/Image/Menu/AudioLines.svg"},
+        {_actionSettings, ":/Resource/Image/Menu/Settings.svg"},
+        {_actionAbout, ":/Resource/Image/Menu/Info.svg"},
+        {_actionQuit, ":/Resource/Image/Menu/Power.svg"},
+    };
+    for (const auto &[action, resource] : icons) {
+        action->setIcon(TintedSvgIcon(
+            resource, action == _actionNewVersion ? colors.accent : colors.text, kMenuIconSize));
+    }
+    _header->ApplyTheme();
+
+    // The tray glyph follows the system theme, which may have just changed too.
+    Repaint();
 }
 
 void TrayIcon::UpdateState(const Core::AirPods::State &state)
@@ -124,6 +160,8 @@ void TrayIcon::ShowContextMenu(const QPoint &position)
 
 void TrayIcon::Repaint()
 {
+    _settingsWindow.SetDevice({_status, _airPodsState});
+
     QString toolTipContent;
     Core::AirPods::Battery minBattery;
 
@@ -132,12 +170,14 @@ void TrayIcon::Repaint()
     case Status::Disconnected:
     case Status::Unbind:
         toolTipContent = DisplayableStatus(_status);
+        _header->SetStatus(toolTipContent);
         break;
     case Status::Updating: {
         if (!_airPodsState.has_value()) {
             break;
         }
         const auto &state = _airPodsState.value();
+        _header->SetState(state);
 
         toolTipContent += state.displayName;
 
@@ -196,136 +236,90 @@ void TrayIcon::Repaint()
 
     // RepaintIcon
 
-    std::optional<QString> iconText;
-
-    do {
-        if (minBattery.Available()) {
-            const auto drawBattery = [&] {
-                switch (_trayIconBatteryBehavior) {
-                case Core::Settings::TrayIconBatteryBehavior::Disable:
-                    return false;
-                case Core::Settings::TrayIconBatteryBehavior::WhenLowBattery:
-                    return minBattery.IsLowBattery();
-                case Core::Settings::TrayIconBatteryBehavior::Always:
-                    return true;
-                default:
-                    return false;
-                }
-            }();
-
-            if (drawBattery) {
-                iconText = QString::number(minBattery.Value());
-                break;
+    std::optional<Core::AirPods::Battery::ValueType> iconBattery;
+    if (minBattery.Available()) {
+        const bool drawBattery = [&] {
+            switch (_trayIconBatteryBehavior) {
+            case Core::Settings::TrayIconBatteryBehavior::WhenLowBattery:
+                return minBattery.IsLowBattery();
+            case Core::Settings::TrayIconBatteryBehavior::Always:
+                return true;
+            case Core::Settings::TrayIconBatteryBehavior::Disable:
+            default:
+                return false;
             }
+        }();
+        if (drawBattery) {
+            iconBattery = minBattery.Value();
         }
-
-        iconText.reset();
-    } while (false);
+    }
 
     static const QColor kNewVersionAvailableDot = Qt::yellow;
     const IconRenderState nextIconRenderState{
-        .text = iconText,
+        .battery = iconBattery,
         .showUpdateDot = _updateReleaseInfo.has_value(),
+        .systemDark = Theme::Manager::Instance().IsSystemDark(),
     };
 
     if (_lastIconRenderState == nextIconRenderState) {
         return;
     }
 
-    auto optIcon = GenerateIcon(
-        64, nextIconRenderState.text,
-        nextIconRenderState.showUpdateDot ? std::optional<QColor>{kNewVersionAvailableDot}
-                                          : std::nullopt);
-    if (optIcon.has_value()) {
-        _tray->setIcon(QIcon{QPixmap::fromImage(optIcon.value())});
+    // One rendition per common tray size (100%-300% scaling): a thin line glyph only stays crisp
+    // when drawn at the size Windows shows it, not shrunk from a large image.
+    QIcon icon;
+    for (const int size : {16, 20, 24, 32, 40, 48, 64}) {
+        const auto optIcon = GenerateIcon(
+            size, nextIconRenderState.systemDark ? QColor{Qt::white} : QColor{Qt::black},
+            nextIconRenderState.battery,
+            nextIconRenderState.showUpdateDot ? std::optional<QColor>{kNewVersionAvailableDot}
+                                              : std::nullopt);
+        if (optIcon.has_value()) {
+            icon.addPixmap(QPixmap::fromImage(optIcon.value()));
+        }
+    }
+    if (!icon.isNull()) {
+        _tray->setIcon(icon);
         _lastIconRenderState = nextIconRenderState;
     }
 }
 
 std::optional<QImage> TrayIcon::GenerateIcon(
-    int size, const std::optional<QString> &optText, const std::optional<QColor> &dot)
+    int size, const QColor &glyph,
+    const std::optional<Core::AirPods::Battery::ValueType> &battery,
+    const std::optional<QColor> &dot)
 {
-    QImage result{size, size, QImage::Format_ARGB32};
-    QPainter painter{&result};
-
+    QImage result{size, size, QImage::Format_ARGB32_Premultiplied};
     result.fill(Qt::transparent);
-
-    QSvgRenderer{QString{Config::QrcIconSvg}}.render(&painter);
-
+    QPainter painter{&result};
     painter.setRenderHint(QPainter::Antialiasing);
 
-    painter.save();
-    do {
-        if (!optText.has_value() || optText->isEmpty()) {
-            break;
-        }
-        const auto &text = optText.value();
+    if (!battery.has_value()) {
+        painter.drawImage(0, 0, TintedSvgImage(kTrayGlyph, glyph, size, 1.0));
+    }
+    else {
+        // A tray icon is ~16px: digits on a badge were unreadable there, so show the lowest pod's
+        // level as a small battery bar under a slightly smaller glyph (F003). The exact
+        // percentage is in the tooltip and the tray menu.
+        const int barHeight = std::max(3, qRound(size * 0.19));
+        const int glyphSize = size - barHeight - std::max(1, qRound(size * 0.08));
+        painter.drawImage(
+            (size - glyphSize) / 2, 0, TintedSvgImage(kTrayGlyph, glyph, glyphSize, 1.0));
 
-        static std::unordered_map<int, std::optional<QFont>> trayIconFonts;
+        const QRectF track{1.0, qreal(size - barHeight), qreal(size - 2), qreal(barHeight)};
+        const qreal radius = barHeight / 2.0;
+        QColor trackColor = glyph;
+        trackColor.setAlpha(90);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(trackColor);
+        painter.drawRoundedRect(track, radius, radius);
 
-        const auto &adjustFont = [](const QString &family,
-                                    int desiredSize) -> std::optional<QFont> {
-            int lastHeight = 0;
-
-            for (int i = 1; i < 100; i++) {
-                QFont font{family, i};
-                font.setBold(true);
-
-                int currentHeight = QFontMetrics{font}.height();
-                if (currentHeight == desiredSize ||
-                    lastHeight < desiredSize && currentHeight > desiredSize) [[unlikely]]
-                {
-                    LOG(Info,
-                        "Found a suitable font for the tray icon. "
-                        "Family: '{}', desiredSize: '{}', fontHeight: '{}', fontSize: '{}'",
-                        family, desiredSize, currentHeight, i);
-                    return font;
-                }
-                lastHeight = currentHeight;
-            }
-
-            LOG(Warn,
-                "Cannot find a suitable font for the tray icon. Family: '{}', desiredSize: "
-                "'{}'",
-                family, desiredSize);
-
-            return std::nullopt;
-        };
-
-        auto textHeight = size * 0.8;
-
-        if (!trayIconFonts.contains(textHeight)) {
-            trayIconFonts[textHeight] = adjustFont(qApp->font().family(), textHeight);
-        }
-
-        const auto &optFont = trayIconFonts[textHeight];
-        if (!optFont.has_value()) {
-            break;
-        }
-        const auto &font = optFont.value();
-        const auto &fontMetrics = QFontMetrics{font};
-
-        const auto textWidth = fontMetrics.horizontalAdvance(text);
-        textHeight = fontMetrics.height();
-
-        constexpr auto kMargin = QSizeF{2, 0};
-
-        const auto textRect = QRectF{
-            (double)size - textWidth - kMargin.width(), size - textHeight - kMargin.height(),
-            (double)textWidth, textHeight};
-        const auto bgRect = QRectF{
-            textRect.left() - kMargin.width(), textRect.top() - kMargin.height(),
-            textRect.width() + kMargin.width() * 2, textRect.height() + kMargin.height() * 2};
-
-        painter.setPen(Qt::white);
-        painter.setBrush(QColor{255, 36, 66});
-        painter.setFont(font);
-
-        painter.drawRoundedRect(bgRect, 10, 10);
-        painter.drawText(textRect, text);
-
-    } while (false);
-    painter.restore();
+        const auto level = std::min<Core::AirPods::Battery::ValueType>(battery.value(), 100);
+        const qreal fillWidth = std::max(track.height(), track.width() * level / 100.0);
+        // Same thresholds and colours as the battery rows in the popup and menu.
+        painter.setBrush(level <= 20 ? QColor{255, 59, 48} : QColor{52, 199, 89});
+        painter.drawRoundedRect(QRectF{track.topLeft(), QSizeF{fillWidth, track.height()}}, radius, radius);
+    }
 
     painter.save();
     do {
@@ -333,7 +327,7 @@ std::optional<QImage> TrayIcon::GenerateIcon(
             break;
         }
 
-        const double dotDiameter = size * 0.4;
+        const double dotDiameter = size * 0.32;
 
         painter.setBrush(dot.value());
         painter.drawEllipse(QRectF{size - dotDiameter, 0, dotDiameter, dotDiameter});

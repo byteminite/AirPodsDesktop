@@ -6,6 +6,7 @@
 #include <QDialogButtonBox>
 #include <QDesktopServices>
 #include <QDir>
+#include <QScreen>
 #include <QFontDatabase>
 #include <QLabel>
 #include <QListWidget>
@@ -13,6 +14,7 @@
 #include <QRadioButton>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QSlider>
 #include <QTest>
 #include <QTranslator>
 #include <QPlainTextEdit>
@@ -22,15 +24,21 @@
 #include <QStyleOptionComboBox>
 #include <QThread>
 #include <QUrl>
+#include <QWidgetAction>
 #include <QTimer>
 #include <QPainter>
 
 #include "Source/Core/QuickConnect.h"
+#include "Source/Gui/FrostedBackdrop.h"
 #include "Source/Gui/MainWindow.h"
 #include "Source/Gui/SettingsWindow.h"
 #include "Source/Gui/Theme.h"
 #include "Source/Gui/TrayIcon.h"
 #include "Source/Gui/UpdateWindow.h"
+#include "Source/Gui/Widget/BatteryRow.h"
+#include "Source/Gui/Widget/DeviceCard.h"
+#include "Source/Gui/Widget/ToggleSwitch.h"
+#include "Source/Gui/Widget/TrayBatteryHeader.h"
 
 class UpdateUrlRecorder : public QObject
 {
@@ -131,6 +139,35 @@ class UiRenderingTests : public QObject
     Q_OBJECT
 
 private Q_SLOTS:
+    void FrostBackdropBlursAndKeepsSize()
+    {
+        QVERIFY(Gui::FrostBackdrop(QImage{}).isNull());
+
+        // Hard-edged 4px red/blue stripes: the worst case for a blur to smooth out.
+        QImage stripes{320, 316, QImage::Format_RGB32};
+        for (int y = 0; y < stripes.height(); ++y) {
+            for (int x = 0; x < stripes.width(); ++x) {
+                stripes.setPixel(x, y, (x / 4) % 2 == 0 ? qRgb(255, 0, 0) : qRgb(0, 0, 255));
+            }
+        }
+
+        const auto frosted = Gui::FrostBackdrop(stripes);
+        QCOMPARE(frosted.size(), stripes.size());
+        QVERIFY(!frosted.hasAlphaChannel());
+
+        int largestStep = 0;
+        const int row = frosted.height() / 2;
+        for (int x = 1; x < frosted.width(); ++x) {
+            const QColor left = frosted.pixelColor(x - 1, row);
+            const QColor right = frosted.pixelColor(x, row);
+            largestStep = std::max(
+                {largestStep, std::abs(left.red() - right.red()),
+                 std::abs(left.blue() - right.blue())});
+        }
+        // The source jumps by 255 every 4px; once frosted, neighbours differ only slightly.
+        QVERIFY2(largestStep < 16, qPrintable(QString::number(largestStep)));
+    }
+
     void MainWindowRendersAirPods5()
     {
         Core::AirPods::State state;
@@ -170,12 +207,78 @@ private Q_SLOTS:
             }
             QVERIFY(visiblePixels > 100);
 
+            auto *leftRow = window.findChild<Gui::Widget::BatteryRow *>("leftBatteryRow");
+            auto *rightRow = window.findChild<Gui::Widget::BatteryRow *>("rightBatteryRow");
+            auto *caseRow = window.findChild<Gui::Widget::BatteryRow *>("caseBatteryRow");
+            QVERIFY(leftRow != nullptr);
+            QVERIFY(rightRow != nullptr);
+            QVERIFY(caseRow != nullptr);
+            QCOMPARE(leftRow->Label(), QStringLiteral("Left"));
+            QCOMPARE(rightRow->Label(), QStringLiteral("Right"));
+            QCOMPARE(caseRow->Label(), QStringLiteral("Case"));
+            QCOMPARE(leftRow->Value(), std::optional<quint32>{80});
+            QCOMPARE(rightRow->Value(), std::optional<quint32>{70});
+            QCOMPARE(caseRow->Value(), std::optional<quint32>{50});
+            QVERIFY(!leftRow->IsCharging());
+            QVERIFY(!rightRow->IsCharging());
+            QVERIFY(!caseRow->IsCharging());
+
             const auto suffix =
                 QString{"airpods-5-%1-scale%2.png"}.arg(theme.IsDark() ? "dark" : "light", scale);
             QVERIFY(window.grab().save(outputDir + '/' + suffix));
             window.close();
         }
         theme.SetMode(originalMode);
+    }
+
+    void MainWindowBatteryRowsRenderEveryState()
+    {
+        Core::AirPods::State state;
+        state.model = Core::AirPods::Model::AirPods_Pro_2;
+        state.displayName = QStringLiteral("Battery States Test");
+        state.pods.left.battery = 15;        // low (<=20%), not charging
+        state.pods.left.isCharging = false;
+        state.pods.right.battery = 60;       // normal, charging
+        state.pods.right.isCharging = true;
+        // state.caseBox.battery left default-constructed: unavailable
+
+        Gui::MainWindow window;
+        window.UpdateState(state);
+        window.Show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+        auto *leftRow = window.findChild<Gui::Widget::BatteryRow *>("leftBatteryRow");
+        auto *rightRow = window.findChild<Gui::Widget::BatteryRow *>("rightBatteryRow");
+        auto *caseRow = window.findChild<Gui::Widget::BatteryRow *>("caseBatteryRow");
+        QVERIFY(leftRow != nullptr);
+        QVERIFY(rightRow != nullptr);
+        QVERIFY(caseRow != nullptr);
+
+        QCOMPARE(leftRow->Value(), std::optional<quint32>{15});
+        QVERIFY(!leftRow->IsCharging());
+        QCOMPARE(rightRow->Value(), std::optional<quint32>{60});
+        QVERIFY(rightRow->IsCharging());
+
+        // An unavailable side stays in the row list, dimmed, rather than disappearing and
+        // shifting the other two - the whole point of switching away from hide()/show().
+        QVERIFY(!caseRow->Value().has_value());
+        QVERIFY(caseRow->isVisible());
+        QVERIFY(window.findChild<QWidget *>("batteryRowsContainer")->isVisible());
+
+        const auto outputDir = QStringLiteral(APD_BINARY_DIR "/UiValidation");
+        QVERIFY(QDir{}.mkpath(outputDir));
+        QVERIFY(window.grab().save(outputDir + "/main-window-battery-states.png"));
+        window.close();
+
+        // Unbind: the rows hide and the "choose your AirPods" hint + button take their place.
+        window.Unbind();
+        auto *bindButton = window.findChild<QPushButton *>("pushButton");
+        auto *bindHint = window.findChild<QLabel *>("bindHintLabel");
+        QVERIFY(bindButton != nullptr);
+        QVERIFY(bindHint != nullptr);
+        QVERIFY(bindButton->isVisible());
+        QVERIFY(bindHint->isVisible());
+        QVERIFY(!window.findChild<QWidget *>("batteryRowsContainer")->isVisible());
     }
 
     void MainWindowElidesLongDeviceNames()
@@ -729,35 +832,50 @@ private Q_SLOTS:
         QVERIFY(scrollArea->widgetResizable());
         QVERIFY(!scrollArea->horizontalScrollBar()->isVisible());
 
-        for (auto *radioButton : window.findChildren<QRadioButton *>()) {
-            if (!radioButton->isVisible())
-                continue;
-
-            const auto rightEdge =
-                radioButton->mapTo(scrollArea->viewport(), radioButton->rect().topRight()).x();
-            QVERIFY2(
-                rightEdge < scrollArea->viewport()->width(),
-                radioButton->objectName().toUtf8().constData());
+        // At the compact size every control on every page still fits beside its card text.
+        for (int page = 0; page < 4; ++page) {
+            navigation->setCurrentRow(page);
+            QCoreApplication::processEvents();
+            for (auto *control : window.findChildren<QWidget *>()) {
+                if (!control->isVisible() || (qobject_cast<QComboBox *>(control) == nullptr &&
+                                              qobject_cast<QAbstractButton *>(control) == nullptr &&
+                                              qobject_cast<QSlider *>(control) == nullptr))
+                {
+                    continue;
+                }
+                if (!scrollArea->viewport()->isAncestorOf(control)) {
+                    continue;
+                }
+                const auto rightEdge =
+                    control->mapTo(scrollArea->viewport(), control->rect().topRight()).x();
+                QVERIFY2(
+                    rightEdge < scrollArea->viewport()->width(),
+                    qPrintable(QString{"%1 ends at %2, viewport %3 (content %4)"}
+                                   .arg(control->objectName())
+                                   .arg(rightEdge)
+                                   .arg(scrollArea->viewport()->width())
+                                   .arg(scrollArea->widget()->width())));
+            }
         }
+        navigation->setCurrentRow(1);
 
-        auto *buttonBox = window.findChild<QDialogButtonBox *>("buttonBox");
-        QVERIFY(buttonBox != nullptr);
-        const auto buttonBottom = buttonBox->mapTo(&window, buttonBox->rect().bottomLeft()).y();
-        QVERIFY(buttonBottom < window.height());
+        auto *restoreDefaults = window.findChild<QPushButton *>("pbRestoreDefaults");
+        QVERIFY(restoreDefaults != nullptr);
+        QVERIFY(window.findChild<QDialogButtonBox *>() == nullptr);
 
         QTranslator traditionalChinese;
         const auto translationsDir = QCoreApplication::applicationDirPath() + "/translations";
         QVERIFY(traditionalChinese.load(QLocale{"zh_TW"}, "apd", "_", translationsDir));
         QVERIFY(QCoreApplication::installTranslator(&traditionalChinese));
         QCoreApplication::processEvents();
-        QCOMPARE(navigation->item(0)->text(), QString::fromUtf8("\xE4\xB8\x80\xE8\x88\xAC"));
+        // Pages: AirPods (brand name, untranslated), Appearance, General, About.
+        QCOMPARE(navigation->item(0)->text(), QStringLiteral("AirPods"));
         QCOMPARE(navigation->item(1)->text(), QString::fromUtf8("\xE5\xA4\x96\xE8\xA7\x80"));
+        QCOMPARE(navigation->item(2)->text(), QString::fromUtf8("\xE4\xB8\x80\xE8\x88\xAC"));
+        QCOMPARE(window.findChild<QLabel *>("pageTitle")->text(), navigation->item(1)->text());
         QTRY_COMPARE(
-            buttonBox->button(QDialogButtonBox::RestoreDefaults)->text(),
+            restoreDefaults->text(),
             QString::fromUtf8("\xE9\x82\x84\xE5\x8E\x9F\xE9\xA0\x90\xE8\xA8\xAD\xE5\x80\xBC"));
-        QTRY_COMPARE(
-            buttonBox->button(QDialogButtonBox::Close)->text(),
-            QString::fromUtf8("\xE9\x97\x9C\xE9\x96\x89"));
         QVERIFY(appearanceTextFits());
 
         const auto outputDir = QStringLiteral(APD_BINARY_DIR "/UiValidation");
@@ -810,6 +928,72 @@ private Q_SLOTS:
         Gui::Theme::ApplyApplicationTypography(QLocale{"en_US"});
     }
 
+    void TrayMenuShowsBatteryHeader()
+    {
+        auto backend = std::make_shared<Core::QuickConnect::NullBackend>();
+        Core::QuickConnect::Controller quickConnect{backend};
+        Gui::TrayIcon tray{[] { return 0; }, quickConnect};
+
+        auto *header = tray.findChild<Gui::Widget::TrayBatteryHeader *>("trayBatteryHeader");
+        QVERIFY(header != nullptr);
+        auto *status = header->findChild<QLabel *>("trayBatteryHeaderStatus");
+        QVERIFY(status != nullptr);
+
+        tray.Disconnect();
+        QVERIFY(header->IsShowingStatus());
+        QVERIFY(!status->text().isEmpty());
+
+        Core::AirPods::State state;
+        state.model = Core::AirPods::Model::AirPods_Pro_2;
+        state.displayName = QStringLiteral("Miha's AirPods Pro");
+        state.pods.left.battery = 15;
+        state.pods.right.battery = 60;
+        state.pods.right.isCharging = true;
+        tray.UpdateState(state);
+
+        QVERIFY(!header->IsShowingStatus());
+        QCOMPARE(
+            header->findChild<QLabel *>("trayBatteryHeaderName")->text(), state.displayName);
+        auto *left = header->findChild<Gui::Widget::BatteryRow *>("trayLeftBatteryRow");
+        auto *right = header->findChild<Gui::Widget::BatteryRow *>("trayRightBatteryRow");
+        auto *caseRow = header->findChild<Gui::Widget::BatteryRow *>("trayCaseBatteryRow");
+        QVERIFY(left != nullptr && right != nullptr && caseRow != nullptr);
+        QCOMPARE(left->Value(), std::optional<quint32>{15});
+        QVERIFY(!left->IsCharging());
+        QCOMPARE(right->Value(), std::optional<quint32>{60});
+        QVERIFY(right->IsCharging());
+        QVERIFY(!caseRow->Value().has_value());
+
+        // Every action keeps an icon, and the toggle stays checkable.
+        auto *menu = tray.findChild<QMenu *>();
+        for (auto *action : menu->actions()) {
+            if (action->isSeparator() || qobject_cast<QWidgetAction *>(action) != nullptr) {
+                continue;
+            }
+            QVERIFY2(!action->icon().isNull(), qPrintable(action->text()));
+        }
+
+        tray.ShowContextMenu(QPoint{100, 100});
+        QVERIFY(QTest::qWaitForWindowExposed(menu));
+        QVERIFY(menu->grab().save(QStringLiteral(APD_BINARY_DIR "/UiValidation/tray-menu-battery.png")));
+        QTest::keyClick(menu, Qt::Key_Escape);
+        QTRY_VERIFY(!menu->isVisible());
+
+        // Opened at the taskbar edge, as from the tray, the menu keeps a gap above it.
+        const auto available = QGuiApplication::primaryScreen()->availableGeometry();
+        tray.ShowContextMenu(available.bottomRight());
+        QVERIFY(QTest::qWaitForWindowExposed(menu));
+        constexpr int kVisibleGap = 12;
+        const auto surfaceBottom = menu->geometry().bottom() - 3; // painted surface inset
+        const auto surfaceRight = menu->geometry().right() - 3;
+        QVERIFY2(
+            available.bottom() - surfaceBottom >= kVisibleGap,
+            qPrintable(QString{"gap %1"}.arg(available.bottom() - surfaceBottom)));
+        QVERIFY(available.right() - surfaceRight >= kVisibleGap);
+        QTest::keyClick(menu, Qt::Key_Escape);
+        QTRY_VERIFY(!menu->isVisible());
+    }
+
     void TrayMenuHasSmoothCorners()
     {
         auto backend = std::make_shared<Core::QuickConnect::NullBackend>();
@@ -848,6 +1032,96 @@ private Q_SLOTS:
             QTRY_VERIFY(!menu->isVisible());
         }
         theme.SetMode(originalMode);
+    }
+
+    void SettingsDeviceCardFollowsAirPodsState()
+    {
+        auto backend = std::make_shared<Core::QuickConnect::NullBackend>();
+        Core::QuickConnect::Controller quickConnect{backend};
+        Gui::SettingsWindow window{[] { return 0; }, quickConnect};
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+        auto *card = window.findChild<Gui::Widget::DeviceCard *>("deviceCard");
+        QVERIFY(card != nullptr);
+        auto *name = card->findChild<QLabel *>("deviceCardName");
+        auto *status = card->findChild<QLabel *>("deviceCardStatus");
+        auto *button = card->findChild<QPushButton *>("pbUnbind");
+        auto *left = card->findChild<Gui::Widget::BatteryRow *>("deviceLeftBatteryRow");
+        auto *right = card->findChild<Gui::Widget::BatteryRow *>("deviceRightBatteryRow");
+        auto *caseRow = card->findChild<Gui::Widget::BatteryRow *>("deviceCaseBatteryRow");
+        QVERIFY(name && status && button && left && right && caseRow);
+
+        Core::AirPods::State state;
+        state.model = Core::AirPods::Model::AirPods_Pro_2;
+        state.displayName = QStringLiteral("Miha's AirPods Pro");
+        state.pods.left.battery = 80;
+        state.pods.right.battery = 15;
+        state.caseBox.battery = 50;
+        state.caseBox.isCharging = true;
+
+        const auto outputDir = QStringLiteral(APD_BINARY_DIR "/UiValidation");
+        QDir{}.mkpath(outputDir);
+
+        // Connected, case charging
+        window.SetDevice({Gui::Status::Updating, state});
+        QCOMPARE(name->text(), state.displayName);
+        QCOMPARE(left->Value(), std::optional<quint32>{80});
+        QCOMPARE(right->Value(), std::optional<quint32>{15});
+        QCOMPARE(caseRow->Value(), std::optional<quint32>{50});
+        QVERIFY(caseRow->IsCharging());
+        QVERIFY(!left->IsCharging());
+        QVERIFY(left->isVisible());
+        QVERIFY(button->text().contains("Unbind"));
+        QVERIFY(window.grab().save(outputDir + "/settings-airpods-connected.png"));
+
+        // Disconnected: no stale battery
+        window.SetDevice({Gui::Status::Disconnected, std::nullopt});
+        QCOMPARE(status->text(), Gui::DisplayableStatus(Gui::Status::Disconnected));
+        QVERIFY(!left->Value().has_value());
+        QVERIFY(!caseRow->IsCharging());
+
+        // Unbound: the button binds instead and asks for the popup
+        QSignalSpy bindSpy{&window, &Gui::SettingsWindow::BindRequested};
+        window.SetDevice({Gui::Status::Unbind, std::nullopt});
+        QVERIFY(!left->isVisible());
+        QVERIFY(button->text().contains("Bind to AirPods"));
+        QTest::mouseClick(button, Qt::LeftButton);
+        QCOMPARE(bindSpy.count(), 1);
+        QVERIFY(window.grab().save(outputDir + "/settings-airpods-unbound.png"));
+
+        // Every page renders; save them for review.
+        auto *navigation = window.findChild<QListWidget *>("navList");
+        for (const auto &[row, file] : {
+                 std::pair{1, "settings-appearance.png"},
+                 std::pair{2, "settings-general.png"},
+                 std::pair{3, "settings-about.png"},
+             })
+        {
+            navigation->setCurrentRow(row);
+            QCoreApplication::processEvents();
+            QVERIFY(window.grab().save(outputDir + "/" + file));
+        }
+    }
+
+    void ToggleSwitchBehavesLikeACheckBox()
+    {
+        Gui::Widget::ToggleSwitch toggle;
+        toggle.setAccessibleName(QStringLiteral("Test"));
+        toggle.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&toggle));
+        QVERIFY(toggle.minimumSizeHint().height() >= 32);
+
+        QSignalSpy spy{&toggle, &QCheckBox::toggled};
+        QTest::mouseClick(&toggle, Qt::LeftButton, {}, toggle.rect().center());
+        QVERIFY(toggle.isChecked());
+        // The whole control is the hit target, including its "On"/"Off" text.
+        QTest::mouseClick(&toggle, Qt::LeftButton, {}, QPoint{2, toggle.height() / 2});
+        QVERIFY(!toggle.isChecked());
+        toggle.setFocus();
+        QTest::keyClick(&toggle, Qt::Key_Space);
+        QVERIFY(toggle.isChecked());
+        QCOMPARE(spy.count(), 3);
     }
 
     void SettingsDescriptionsFollowConsecutiveLanguageChanges()

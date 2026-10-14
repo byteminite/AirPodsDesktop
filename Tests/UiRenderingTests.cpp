@@ -31,6 +31,7 @@
 #include "Source/Gui/Theme.h"
 #include "Source/Gui/TrayIcon.h"
 #include "Source/Gui/UpdateWindow.h"
+#include "Source/Gui/Widget/BatteryRow.h"
 
 class UpdateUrlRecorder : public QObject
 {
@@ -170,12 +171,78 @@ private Q_SLOTS:
             }
             QVERIFY(visiblePixels > 100);
 
+            auto *leftRow = window.findChild<Gui::Widget::BatteryRow *>("leftBatteryRow");
+            auto *rightRow = window.findChild<Gui::Widget::BatteryRow *>("rightBatteryRow");
+            auto *caseRow = window.findChild<Gui::Widget::BatteryRow *>("caseBatteryRow");
+            QVERIFY(leftRow != nullptr);
+            QVERIFY(rightRow != nullptr);
+            QVERIFY(caseRow != nullptr);
+            QCOMPARE(leftRow->Label(), QStringLiteral("Left"));
+            QCOMPARE(rightRow->Label(), QStringLiteral("Right"));
+            QCOMPARE(caseRow->Label(), QStringLiteral("Case"));
+            QCOMPARE(leftRow->Value(), std::optional<quint32>{80});
+            QCOMPARE(rightRow->Value(), std::optional<quint32>{70});
+            QCOMPARE(caseRow->Value(), std::optional<quint32>{50});
+            QVERIFY(!leftRow->IsCharging());
+            QVERIFY(!rightRow->IsCharging());
+            QVERIFY(!caseRow->IsCharging());
+
             const auto suffix =
                 QString{"airpods-5-%1-scale%2.png"}.arg(theme.IsDark() ? "dark" : "light", scale);
             QVERIFY(window.grab().save(outputDir + '/' + suffix));
             window.close();
         }
         theme.SetMode(originalMode);
+    }
+
+    void MainWindowBatteryRowsRenderEveryState()
+    {
+        Core::AirPods::State state;
+        state.model = Core::AirPods::Model::AirPods_Pro_2;
+        state.displayName = QStringLiteral("Battery States Test");
+        state.pods.left.battery = 15;        // low (<=20%), not charging
+        state.pods.left.isCharging = false;
+        state.pods.right.battery = 60;       // normal, charging
+        state.pods.right.isCharging = true;
+        // state.caseBox.battery left default-constructed: unavailable
+
+        Gui::MainWindow window;
+        window.UpdateState(state);
+        window.Show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+        auto *leftRow = window.findChild<Gui::Widget::BatteryRow *>("leftBatteryRow");
+        auto *rightRow = window.findChild<Gui::Widget::BatteryRow *>("rightBatteryRow");
+        auto *caseRow = window.findChild<Gui::Widget::BatteryRow *>("caseBatteryRow");
+        QVERIFY(leftRow != nullptr);
+        QVERIFY(rightRow != nullptr);
+        QVERIFY(caseRow != nullptr);
+
+        QCOMPARE(leftRow->Value(), std::optional<quint32>{15});
+        QVERIFY(!leftRow->IsCharging());
+        QCOMPARE(rightRow->Value(), std::optional<quint32>{60});
+        QVERIFY(rightRow->IsCharging());
+
+        // An unavailable side stays in the row list, dimmed, rather than disappearing and
+        // shifting the other two - the whole point of switching away from hide()/show().
+        QVERIFY(!caseRow->Value().has_value());
+        QVERIFY(caseRow->isVisible());
+        QVERIFY(window.findChild<QWidget *>("batteryRowsContainer")->isVisible());
+
+        const auto outputDir = QStringLiteral(APD_BINARY_DIR "/UiValidation");
+        QVERIFY(QDir{}.mkpath(outputDir));
+        QVERIFY(window.grab().save(outputDir + "/main-window-battery-states.png"));
+        window.close();
+
+        // Unbind: the rows hide and the "choose your AirPods" hint + button take their place.
+        window.Unbind();
+        auto *bindButton = window.findChild<QPushButton *>("pushButton");
+        auto *bindHint = window.findChild<QLabel *>("bindHintLabel");
+        QVERIFY(bindButton != nullptr);
+        QVERIFY(bindHint != nullptr);
+        QVERIFY(bindButton->isVisible());
+        QVERIFY(bindHint->isVisible());
+        QVERIFY(!window.findChild<QWidget *>("batteryRowsContainer")->isVisible());
     }
 
     void MainWindowElidesLongDeviceNames()

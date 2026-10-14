@@ -48,6 +48,19 @@ public:
     void SetLowThreshold(ValueType percent);
     void SetUnavailableOpacity(qreal opacity);
 
+    QString Label() const
+    {
+        return _label;
+    }
+    std::optional<ValueType> Value() const
+    {
+        return _value;
+    }
+    bool IsCharging() const
+    {
+        return _charging;
+    }
+
     QSize sizeHint() const override;
 
 protected:

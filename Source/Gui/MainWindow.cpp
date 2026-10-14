@@ -146,6 +146,9 @@ MainWindow::MainWindow(QWidget *parent) : QDialog{parent}
     _animationView = new Widget::AnimationView{this};
     _playback = new AnimationPlayback{*_animationView, this};
     _closeButton = new CloseButton{this};
+    _leftBattery->setObjectName("leftBatteryRow");
+    _rightBattery->setObjectName("rightBatteryRow");
+    _caseBattery->setObjectName("caseBatteryRow");
 
     _ui.setupUi(this);
 

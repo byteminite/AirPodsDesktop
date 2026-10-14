@@ -937,6 +937,35 @@ void ConfigurePopupSurface(QWidget *popup)
     }
 }
 
+bool EnableMicaBackdrop(QWidget *window)
+{
+#if defined APD_OS_WIN
+    constexpr DWORD kDwmwaSystemBackdropType = 38;
+    constexpr DWORD kDwmsbtMainWindow = 2;
+
+    const auto hwnd = reinterpret_cast<HWND>(window->winId());
+    if (hwnd == nullptr || !Core::OS::Windows::System::Is11OrGreater()) {
+        return false;
+    }
+    DWORD backdrop = kDwmsbtMainWindow;
+    if (FAILED(DwmSetWindowAttribute(
+            hwnd, kDwmwaSystemBackdropType, &backdrop, sizeof(backdrop))))
+    {
+        return false;
+    }
+    const MARGINS margins{-1, -1, -1, -1};
+    if (FAILED(DwmExtendFrameIntoClientArea(hwnd, &margins))) {
+        backdrop = 0;
+        DwmSetWindowAttribute(hwnd, kDwmwaSystemBackdropType, &backdrop, sizeof(backdrop));
+        return false;
+    }
+    return true;
+#else
+    Q_UNUSED(window)
+    return false;
+#endif
+}
+
 void Manager::ApplyToApplication()
 {
     qApp->setPalette(QtPalette());

@@ -46,6 +46,11 @@ void ApplyApplicationTypography(const QLocale &locale);
 void ConfigurePopupSurface(QWidget *popup);
 constexpr auto kCustomSurfaceProperty = "apdCustomSurface";
 
+// Puts Windows 11's Mica material behind a framed window that has `WA_TranslucentBackground` set,
+// extending it under the title bar. Returns false where the system has no Mica (before Windows 11
+// 22H2), so the caller keeps painting a solid background.
+bool EnableMicaBackdrop(QWidget *window);
+
 //
 // Colour tokens for the whole application.
 //

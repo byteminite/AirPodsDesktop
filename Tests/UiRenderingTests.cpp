@@ -13,6 +13,7 @@
 #include <QRadioButton>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QSlider>
 #include <QTest>
 #include <QTranslator>
 #include <QPlainTextEdit>
@@ -34,6 +35,8 @@
 #include "Source/Gui/TrayIcon.h"
 #include "Source/Gui/UpdateWindow.h"
 #include "Source/Gui/Widget/BatteryRow.h"
+#include "Source/Gui/Widget/DeviceCard.h"
+#include "Source/Gui/Widget/ToggleSwitch.h"
 #include "Source/Gui/Widget/TrayBatteryHeader.h"
 
 class UpdateUrlRecorder : public QObject
@@ -828,35 +831,50 @@ private Q_SLOTS:
         QVERIFY(scrollArea->widgetResizable());
         QVERIFY(!scrollArea->horizontalScrollBar()->isVisible());
 
-        for (auto *radioButton : window.findChildren<QRadioButton *>()) {
-            if (!radioButton->isVisible())
-                continue;
-
-            const auto rightEdge =
-                radioButton->mapTo(scrollArea->viewport(), radioButton->rect().topRight()).x();
-            QVERIFY2(
-                rightEdge < scrollArea->viewport()->width(),
-                radioButton->objectName().toUtf8().constData());
+        // At the compact size every control on every page still fits beside its card text.
+        for (int page = 0; page < 4; ++page) {
+            navigation->setCurrentRow(page);
+            QCoreApplication::processEvents();
+            for (auto *control : window.findChildren<QWidget *>()) {
+                if (!control->isVisible() || (qobject_cast<QComboBox *>(control) == nullptr &&
+                                              qobject_cast<QAbstractButton *>(control) == nullptr &&
+                                              qobject_cast<QSlider *>(control) == nullptr))
+                {
+                    continue;
+                }
+                if (!scrollArea->viewport()->isAncestorOf(control)) {
+                    continue;
+                }
+                const auto rightEdge =
+                    control->mapTo(scrollArea->viewport(), control->rect().topRight()).x();
+                QVERIFY2(
+                    rightEdge < scrollArea->viewport()->width(),
+                    qPrintable(QString{"%1 ends at %2, viewport %3 (content %4)"}
+                                   .arg(control->objectName())
+                                   .arg(rightEdge)
+                                   .arg(scrollArea->viewport()->width())
+                                   .arg(scrollArea->widget()->width())));
+            }
         }
+        navigation->setCurrentRow(1);
 
-        auto *buttonBox = window.findChild<QDialogButtonBox *>("buttonBox");
-        QVERIFY(buttonBox != nullptr);
-        const auto buttonBottom = buttonBox->mapTo(&window, buttonBox->rect().bottomLeft()).y();
-        QVERIFY(buttonBottom < window.height());
+        auto *restoreDefaults = window.findChild<QPushButton *>("pbRestoreDefaults");
+        QVERIFY(restoreDefaults != nullptr);
+        QVERIFY(window.findChild<QDialogButtonBox *>() == nullptr);
 
         QTranslator traditionalChinese;
         const auto translationsDir = QCoreApplication::applicationDirPath() + "/translations";
         QVERIFY(traditionalChinese.load(QLocale{"zh_TW"}, "apd", "_", translationsDir));
         QVERIFY(QCoreApplication::installTranslator(&traditionalChinese));
         QCoreApplication::processEvents();
-        QCOMPARE(navigation->item(0)->text(), QString::fromUtf8("\xE4\xB8\x80\xE8\x88\xAC"));
+        // Pages: AirPods (brand name, untranslated), Appearance, General, About.
+        QCOMPARE(navigation->item(0)->text(), QStringLiteral("AirPods"));
         QCOMPARE(navigation->item(1)->text(), QString::fromUtf8("\xE5\xA4\x96\xE8\xA7\x80"));
+        QCOMPARE(navigation->item(2)->text(), QString::fromUtf8("\xE4\xB8\x80\xE8\x88\xAC"));
+        QCOMPARE(window.findChild<QLabel *>("pageTitle")->text(), navigation->item(1)->text());
         QTRY_COMPARE(
-            buttonBox->button(QDialogButtonBox::RestoreDefaults)->text(),
+            restoreDefaults->text(),
             QString::fromUtf8("\xE9\x82\x84\xE5\x8E\x9F\xE9\xA0\x90\xE8\xA8\xAD\xE5\x80\xBC"));
-        QTRY_COMPARE(
-            buttonBox->button(QDialogButtonBox::Close)->text(),
-            QString::fromUtf8("\xE9\x97\x9C\xE9\x96\x89"));
         QVERIFY(appearanceTextFits());
 
         const auto outputDir = QStringLiteral(APD_BINARY_DIR "/UiValidation");
@@ -999,6 +1017,96 @@ private Q_SLOTS:
             QTRY_VERIFY(!menu->isVisible());
         }
         theme.SetMode(originalMode);
+    }
+
+    void SettingsDeviceCardFollowsAirPodsState()
+    {
+        auto backend = std::make_shared<Core::QuickConnect::NullBackend>();
+        Core::QuickConnect::Controller quickConnect{backend};
+        Gui::SettingsWindow window{[] { return 0; }, quickConnect};
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+        auto *card = window.findChild<Gui::Widget::DeviceCard *>("deviceCard");
+        QVERIFY(card != nullptr);
+        auto *name = card->findChild<QLabel *>("deviceCardName");
+        auto *status = card->findChild<QLabel *>("deviceCardStatus");
+        auto *button = card->findChild<QPushButton *>("pbUnbind");
+        auto *left = card->findChild<Gui::Widget::BatteryRow *>("deviceLeftBatteryRow");
+        auto *right = card->findChild<Gui::Widget::BatteryRow *>("deviceRightBatteryRow");
+        auto *caseRow = card->findChild<Gui::Widget::BatteryRow *>("deviceCaseBatteryRow");
+        QVERIFY(name && status && button && left && right && caseRow);
+
+        Core::AirPods::State state;
+        state.model = Core::AirPods::Model::AirPods_Pro_2;
+        state.displayName = QStringLiteral("Miha's AirPods Pro");
+        state.pods.left.battery = 80;
+        state.pods.right.battery = 15;
+        state.caseBox.battery = 50;
+        state.caseBox.isCharging = true;
+
+        const auto outputDir = QStringLiteral(APD_BINARY_DIR "/UiValidation");
+        QDir{}.mkpath(outputDir);
+
+        // Connected, case charging
+        window.SetDevice({Gui::Status::Updating, state});
+        QCOMPARE(name->text(), state.displayName);
+        QCOMPARE(left->Value(), std::optional<quint32>{80});
+        QCOMPARE(right->Value(), std::optional<quint32>{15});
+        QCOMPARE(caseRow->Value(), std::optional<quint32>{50});
+        QVERIFY(caseRow->IsCharging());
+        QVERIFY(!left->IsCharging());
+        QVERIFY(left->isVisible());
+        QVERIFY(button->text().contains("Unbind"));
+        QVERIFY(window.grab().save(outputDir + "/settings-airpods-connected.png"));
+
+        // Disconnected: no stale battery
+        window.SetDevice({Gui::Status::Disconnected, std::nullopt});
+        QCOMPARE(status->text(), Gui::DisplayableStatus(Gui::Status::Disconnected));
+        QVERIFY(!left->Value().has_value());
+        QVERIFY(!caseRow->IsCharging());
+
+        // Unbound: the button binds instead and asks for the popup
+        QSignalSpy bindSpy{&window, &Gui::SettingsWindow::BindRequested};
+        window.SetDevice({Gui::Status::Unbind, std::nullopt});
+        QVERIFY(!left->isVisible());
+        QVERIFY(button->text().contains("Bind to AirPods"));
+        QTest::mouseClick(button, Qt::LeftButton);
+        QCOMPARE(bindSpy.count(), 1);
+        QVERIFY(window.grab().save(outputDir + "/settings-airpods-unbound.png"));
+
+        // Every page renders; save them for review.
+        auto *navigation = window.findChild<QListWidget *>("navList");
+        for (const auto &[row, file] : {
+                 std::pair{1, "settings-appearance.png"},
+                 std::pair{2, "settings-general.png"},
+                 std::pair{3, "settings-about.png"},
+             })
+        {
+            navigation->setCurrentRow(row);
+            QCoreApplication::processEvents();
+            QVERIFY(window.grab().save(outputDir + "/" + file));
+        }
+    }
+
+    void ToggleSwitchBehavesLikeACheckBox()
+    {
+        Gui::Widget::ToggleSwitch toggle;
+        toggle.setAccessibleName(QStringLiteral("Test"));
+        toggle.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&toggle));
+        QVERIFY(toggle.minimumSizeHint().height() >= 32);
+
+        QSignalSpy spy{&toggle, &QCheckBox::toggled};
+        QTest::mouseClick(&toggle, Qt::LeftButton, {}, toggle.rect().center());
+        QVERIFY(toggle.isChecked());
+        // The whole control is the hit target, including its "On"/"Off" text.
+        QTest::mouseClick(&toggle, Qt::LeftButton, {}, QPoint{2, toggle.height() / 2});
+        QVERIFY(!toggle.isChecked());
+        toggle.setFocus();
+        QTest::keyClick(&toggle, Qt::Key_Space);
+        QVERIFY(toggle.isChecked());
+        QCOMPARE(spy.count(), 3);
     }
 
     void SettingsDescriptionsFollowConsecutiveLanguageChanges()

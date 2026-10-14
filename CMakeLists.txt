@@ -361,6 +361,9 @@ set(
     "Source/Gui/Widget/Battery.cpp"
     "Source/Gui/Widget/BatteryRow.cpp"
     "Source/Gui/Widget/TrayBatteryHeader.cpp"
+    "Source/Gui/Widget/ToggleSwitch.cpp"
+    "Source/Gui/Widget/SettingsCard.cpp"
+    "Source/Gui/Widget/DeviceCard.cpp"
     "Source/Gui/Widget/AnimationView.cpp"
     "Source/Gui/Theme.cpp"
 )

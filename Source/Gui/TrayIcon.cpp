@@ -54,6 +54,9 @@ TrayIcon::TrayIcon(
     connect(_actionQuit, &QAction::triggered, qApp, &QApplication::quit, Qt::QueuedConnection);
     connect(_tray, &QSystemTrayIcon::activated, this, &TrayIcon::OnIconClicked);
     connect(_tray, &QSystemTrayIcon::messageClicked, this, &TrayIcon::ShowMainWindowRequested);
+    // "Bind to AirPods" on the Settings device card opens the popup, which lists the devices.
+    connect(
+        &_settingsWindow, &SettingsWindow::BindRequested, this, &TrayIcon::ShowMainWindowRequested);
     connect(
         &_quickConnect, &Core::QuickConnect::Controller::OutcomeChanged, this,
         &TrayIcon::OnQuickConnectOutcome);
@@ -157,6 +160,8 @@ void TrayIcon::ShowContextMenu(const QPoint &position)
 
 void TrayIcon::Repaint()
 {
+    _settingsWindow.SetDevice({_status, _airPodsState});
+
     QString toolTipContent;
     Core::AirPods::Battery minBattery;
 

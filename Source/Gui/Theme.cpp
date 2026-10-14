@@ -249,7 +249,7 @@ Palette BuildPalette(const SystemTheme &system)
         p.popupBorder = QColor{"#C7C7CC"};
 
         p.mainSurface = QColor{"#FFFFFF"};
-        p.mainGlassTint = QColor{246, 246, 248, 184}; // rgba(246,246,248,.72)
+        p.mainGlassTint = QColor{246, 246, 248, 140}; // rgba(246,246,248,.55)
         p.mainText = QColor{"#1B1B1B"};
         p.mainTextSecondary = QColor{"#5E5E5E"};
         p.mainCloseBg = QColor{"#EEEEEF"};
@@ -278,7 +278,7 @@ Palette BuildPalette(const SystemTheme &system)
         p.popupBorder = QColor{"#545458"};
 
         p.mainSurface = QColor{"#1C1C1E"};
-        p.mainGlassTint = QColor{30, 30, 32, 184}; // rgba(30,30,32,.72)
+        p.mainGlassTint = QColor{30, 30, 32, 140}; // rgba(30,30,32,.55)
         p.mainText = QColor{"#F2F2F7"};
         p.mainTextSecondary = QColor{"#A1A1A6"};
         p.mainCloseBg = QColor{"#2C2C2E"};

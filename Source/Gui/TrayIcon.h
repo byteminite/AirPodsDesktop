@@ -18,6 +18,8 @@
 
 #pragma once
 
+#include <memory>
+
 #include <functional>
 
 #include <QSystemTrayIcon>
@@ -33,6 +35,7 @@
 #include "TrayActivation.h"
 #include "SettingsWindow.h"
 #include "TrayMenu.h"
+#include "QuickConnectBanner.h"
 #include "Widget/TrayBatteryHeader.h"
 
 namespace Gui {
@@ -56,6 +59,8 @@ public:
     void Disconnect();
     void Unbind();
     void VersionUpdateAvailable(const Core::Update::ReleaseInfo &releaseInfo);
+    // The popup already shows the AirPods; no quick-connect banner appears beside it.
+    void SetPopupVisible(bool visible);
     void ShowContextMenu(const QPoint &position);
 
 Q_SIGNALS:
@@ -91,6 +96,8 @@ private:
     std::optional<QString> _displayName;
     std::optional<Core::Update::ReleaseInfo> _updateReleaseInfo;
     std::optional<IconRenderState> _lastIconRenderState;
+    std::unique_ptr<QuickConnectBanner> _banner = std::make_unique<QuickConnectBanner>();
+    bool _popupVisible{false};
     Core::QuickConnect::Controller &_quickConnect;
     TrayActivationState _trayActivationState;
     QTimer _singleClickTimer{this};

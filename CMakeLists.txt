@@ -351,6 +351,7 @@ set(
     "Source/Gui/FrostedBackdrop.cpp"
     "Source/Gui/TintedSvg.cpp"
     "Source/Gui/TrayMenu.cpp"
+    "Source/Gui/QuickConnectBanner.cpp"
 
     "Source/Gui/TrayIcon.cpp"
     "Source/Gui/TaskbarStatus.cpp"

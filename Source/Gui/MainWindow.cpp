@@ -693,6 +693,7 @@ void MainWindow::BeginShow(bool fromHidden)
         return;
     }
     _isVisible = true;
+    emit VisibilityChanged(true);
     PlayAnimation();
     ControlAutoHideTimer(true);
 
@@ -713,6 +714,7 @@ void MainWindow::BeginShow(bool fromHidden)
 void MainWindow::hideEvent(QHideEvent *event)
 {
     _isVisible = false;
+    emit VisibilityChanged(false);
     _posAnimation.stop();
     ControlAutoHideTimer(false);
     StopAnimation();

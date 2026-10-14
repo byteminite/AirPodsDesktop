@@ -31,6 +31,7 @@
 #include "Source/Core/QuickConnect.h"
 #include "Source/Gui/FrostedBackdrop.h"
 #include "Source/Gui/MainWindow.h"
+#include "Source/Gui/QuickConnectBanner.h"
 #include "Source/Gui/SettingsWindow.h"
 #include "Source/Gui/Theme.h"
 #include "Source/Gui/TrayIcon.h"
@@ -1122,6 +1123,137 @@ private Q_SLOTS:
         QTest::keyClick(&toggle, Qt::Key_Space);
         QVERIFY(toggle.isChecked());
         QCOMPARE(spy.count(), 3);
+    }
+
+    void QuickConnectBannerShowsOnlyResultsAndProblems()
+    {
+        using Core::QuickConnect::Outcome;
+        using Kind = Gui::QuickConnectBannerContent::Kind;
+
+        Core::AirPods::State airPods;
+        airPods.model = Core::AirPods::Model::AirPods_Pro_2;
+        airPods.displayName = QStringLiteral("Miha's AirPods Pro");
+        airPods.pods.left.battery = 80;
+
+        const auto name = airPods.displayName;
+        for (const auto silent : {Outcome::Disabled, Outcome::AlreadyConnected, Outcome::RequestStarted}) {
+            QVERIFY(!Gui::QuickConnectBannerContentFor(silent, name, airPods).has_value());
+        }
+
+        // Connected AirPods carry their state; another device, or no state yet, does not.
+        auto connected = Gui::QuickConnectBannerContentFor(Outcome::Connected, name, airPods);
+        QVERIFY(connected.has_value());
+        QCOMPARE(connected->kind, Kind::AirPods);
+        QCOMPARE(connected->title, name);
+        QCOMPARE(connected->airPods, std::optional{airPods});
+        QVERIFY(!connected->opensSettings);
+
+        auto other = Gui::QuickConnectBannerContentFor(
+            Outcome::Connected, QStringLiteral("WH-1000XM5"), airPods);
+        QCOMPARE(other->kind, Kind::Device);
+        QVERIFY(!other->airPods.has_value());
+        QCOMPARE(
+            Gui::QuickConnectBannerContentFor(Outcome::Connected, name, std::nullopt)->kind,
+            Kind::Device);
+
+        for (const auto problem :
+             {Outcome::NoDevice, Outcome::DeviceUnavailable, Outcome::TimedOut, Outcome::Failed})
+        {
+            const auto content = Gui::QuickConnectBannerContentFor(problem, name, airPods);
+            QVERIFY(content.has_value());
+            QCOMPARE(content->kind, Kind::Problem);
+            QVERIFY(!content->text.isEmpty());
+            // Only "choose a device" leads to Settings.
+            QCOMPARE(content->opensSettings, problem == Outcome::NoDevice);
+        }
+        QVERIFY(Gui::QuickConnectBannerContentFor(Outcome::TimedOut, name, std::nullopt)
+                    ->text.contains(name));
+    }
+
+    void QuickConnectBannerRendersEveryKind()
+    {
+        using Core::QuickConnect::Outcome;
+
+        Core::AirPods::State airPods;
+        airPods.model = Core::AirPods::Model::AirPods_Pro_2;
+        airPods.displayName = QStringLiteral("Miha's AirPods Pro");
+        airPods.pods.left.battery = 80;
+        airPods.pods.right.battery = 15;
+        airPods.caseBox.battery = 50;
+        airPods.caseBox.isCharging = true;
+
+        Gui::QuickConnectBanner banner;
+        QCOMPARE(banner.focusPolicy(), Qt::NoFocus);
+        QVERIFY(banner.windowFlags().testFlag(Qt::WindowDoesNotAcceptFocus));
+
+        auto *title = banner.findChild<QLabel *>("quickConnectBannerTitle");
+        auto *left = banner.findChild<Gui::Widget::BatteryRow *>("bannerLeftBatteryRow");
+        auto *caseRow = banner.findChild<Gui::Widget::BatteryRow *>("bannerCaseBatteryRow");
+        QVERIFY(title && left && caseRow);
+
+        auto &theme = Gui::Theme::Manager::Instance();
+        const auto originalMode = theme.CurrentMode();
+        const auto outputDir = QStringLiteral(APD_BINARY_DIR "/UiValidation");
+        QDir{}.mkpath(outputDir);
+
+        // The battery arrives after the connection; the AirPods banner fills in live.
+        auto withoutBattery = airPods;
+        withoutBattery.pods = {};
+        withoutBattery.caseBox = {};
+        banner.Show(*Gui::QuickConnectBannerContentFor(Outcome::Connected, airPods.displayName, withoutBattery));
+        QVERIFY(QTest::qWaitForWindowExposed(&banner));
+        QVERIFY(QApplication::focusWidget() == nullptr || !banner.isAncestorOf(QApplication::focusWidget()));
+        QVERIFY(!left->Value().has_value());
+        const auto heightBefore = banner.height();
+        banner.UpdateAirPods(airPods);
+        QCOMPARE(left->Value(), std::optional<quint32>{80});
+        QVERIFY(caseRow->IsCharging());
+        QCOMPARE(banner.height(), heightBefore);
+
+        const struct {
+            const char *name;
+            std::optional<Gui::QuickConnectBannerContent> content;
+        } kinds[] = {
+            {"airpods", Gui::QuickConnectBannerContentFor(Outcome::Connected, airPods.displayName, airPods)},
+            {"device", Gui::QuickConnectBannerContentFor(Outcome::Connected, QStringLiteral("WH-1000XM5"), airPods)},
+            {"problem", Gui::QuickConnectBannerContentFor(Outcome::TimedOut, airPods.displayName, airPods)},
+        };
+        for (const auto mode : {Gui::Theme::Mode::Light, Gui::Theme::Mode::Dark}) {
+            theme.SetMode(mode);
+            for (const auto &kind : kinds) {
+                banner.Show(*kind.content);
+                QVERIFY(QTest::qWaitForWindowExposed(&banner));
+                QTest::qWait(320); // let the slide-in settle
+                QCOMPARE(banner.width(), 340);
+                // Single-line kinds stay compact even right after a taller AirPods banner.
+                if (kind.content->kind != Gui::QuickConnectBannerContent::Kind::AirPods) {
+                    QVERIFY2(banner.height() <= 80, qPrintable(QString::number(banner.height())));
+                }
+                QVERIFY(banner.grab().save(
+                    QString{"%1/banner-%2-%3.png"}
+                        .arg(outputDir)
+                        .arg(kind.name)
+                        .arg(theme.IsDark() ? "dark" : "light")));
+            }
+        }
+
+        // A device name of any length stays on one line.
+        auto longName = *kinds[1].content;
+        longName.title = QString{"Extremely Long Bluetooth Headset Name "}.repeated(3);
+        banner.Show(longName);
+        QVERIFY(title->text().endsWith(QChar{0x2026}));
+        QVERIFY(title->fontMetrics().horizontalAdvance(title->text()) <= title->width());
+
+        // A click hides it and says where to go.
+        QSignalSpy clicked{&banner, &Gui::QuickConnectBanner::Clicked};
+        banner.Show(*Gui::QuickConnectBannerContentFor(Outcome::NoDevice, {}, std::nullopt));
+        QVERIFY(QTest::qWaitForWindowExposed(&banner));
+        QTest::mouseClick(&banner, Qt::LeftButton, {}, banner.rect().center());
+        QCOMPARE(clicked.count(), 1);
+        QCOMPARE(clicked.at(0).at(0).toBool(), true);
+        QVERIFY(!banner.isVisible());
+
+        theme.SetMode(originalMode);
     }
 
     void SettingsDescriptionsFollowConsecutiveLanguageChanges()

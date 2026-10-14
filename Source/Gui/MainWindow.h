@@ -73,6 +73,7 @@ Q_SIGNALS:
     void HideSafely();
     bool VersionUpdateAvailableSafely(const Core::Update::ReleaseInfo &releaseInfo, bool silent);
     void SilentUpdateAvailable(const Core::Update::ReleaseInfo &releaseInfo);
+    void VisibilityChanged(bool visible);
 
 private:
     constexpr static QSize _windowSize{320, 316};

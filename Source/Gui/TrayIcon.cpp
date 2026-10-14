@@ -57,6 +57,17 @@ TrayIcon::TrayIcon(
     // "Bind to AirPods" on the Settings device card opens the popup, which lists the devices.
     connect(
         &_settingsWindow, &SettingsWindow::BindRequested, this, &TrayIcon::ShowMainWindowRequested);
+    connect(_banner.get(), &QuickConnectBanner::Clicked, this, [this](bool opensSettings) {
+        if (opensSettings) {
+            _settingsWindow.SetTabIndex(0);
+            _settingsWindow.show();
+            _settingsWindow.raise();
+            _settingsWindow.activateWindow();
+        }
+        else {
+            emit ShowMainWindowRequested();
+        }
+    });
     connect(
         &_quickConnect, &Core::QuickConnect::Controller::OutcomeChanged, this,
         &TrayIcon::OnQuickConnectOutcome);
@@ -111,6 +122,7 @@ void TrayIcon::UpdateState(const Core::AirPods::State &state)
 {
     _status = Status::Updating;
     _airPodsState = state;
+    _banner->UpdateAirPods(state);
     Repaint();
 }
 
@@ -402,43 +414,23 @@ void TrayIcon::ExecuteTrayActivation(TrayActivationAction action)
 
 void TrayIcon::OnQuickConnectOutcome(Core::QuickConnect::Outcome outcome, const QString &deviceName)
 {
-    QString text;
-    QSystemTrayIcon::MessageIcon icon = QSystemTrayIcon::Information;
-
-    switch (outcome) {
-    case Core::QuickConnect::Outcome::Disabled:
-        text = tr("Quick connection is disabled.");
-        break;
-    case Core::QuickConnect::Outcome::NoDevice:
-        text = tr("Choose a Bluetooth audio device in Settings first.");
-        icon = QSystemTrayIcon::Warning;
-        break;
-    case Core::QuickConnect::Outcome::DeviceUnavailable:
-        text = tr("The selected device is not available. Turn it on or bring it into range.");
-        icon = QSystemTrayIcon::Warning;
-        break;
-    case Core::QuickConnect::Outcome::AlreadyConnected:
-        text = tr("%1 is already connected.").arg(deviceName);
-        break;
-    case Core::QuickConnect::Outcome::RequestStarted:
-        text = tr("Connecting to %1...").arg(deviceName);
-        break;
-    case Core::QuickConnect::Outcome::Connected:
-        text = tr("%1 connected.").arg(deviceName);
-        break;
-    case Core::QuickConnect::Outcome::TimedOut:
-        text = tr("Connection to %1 timed out.").arg(deviceName);
-        icon = QSystemTrayIcon::Warning;
-        break;
-    case Core::QuickConnect::Outcome::Failed:
-        text = tr("Windows could not connect to %1.").arg(deviceName);
-        icon = QSystemTrayIcon::Warning;
-        break;
-    default:
+    // F005: results and problems show as the app's own banner instead of a Windows notification;
+    // "Connecting..." and "already connected" stay silent.
+    const auto content = QuickConnectBannerContentFor(
+        outcome, deviceName,
+        _status == Status::Updating ? _airPodsState : std::optional<Core::AirPods::State>{});
+    if (!content.has_value() || _popupVisible) {
         return;
     }
+    _banner->Show(*content);
+}
 
-    ShowMessage(tr("Quick connect"), text, icon);
+void TrayIcon::SetPopupVisible(bool visible)
+{
+    _popupVisible = visible;
+    if (visible) {
+        _banner->Dismiss();
+    }
 }
 
 void TrayIcon::OnTrayIconBatteryChanged(Core::Settings::TrayIconBatteryBehavior value)

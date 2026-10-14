@@ -26,6 +26,7 @@
 #include <QPainter>
 
 #include "Source/Core/QuickConnect.h"
+#include "Source/Gui/FrostedBackdrop.h"
 #include "Source/Gui/MainWindow.h"
 #include "Source/Gui/SettingsWindow.h"
 #include "Source/Gui/Theme.h"
@@ -132,6 +133,35 @@ class UiRenderingTests : public QObject
     Q_OBJECT
 
 private Q_SLOTS:
+    void FrostBackdropBlursAndKeepsSize()
+    {
+        QVERIFY(Gui::FrostBackdrop(QImage{}).isNull());
+
+        // Hard-edged 4px red/blue stripes: the worst case for a blur to smooth out.
+        QImage stripes{320, 316, QImage::Format_RGB32};
+        for (int y = 0; y < stripes.height(); ++y) {
+            for (int x = 0; x < stripes.width(); ++x) {
+                stripes.setPixel(x, y, (x / 4) % 2 == 0 ? qRgb(255, 0, 0) : qRgb(0, 0, 255));
+            }
+        }
+
+        const auto frosted = Gui::FrostBackdrop(stripes);
+        QCOMPARE(frosted.size(), stripes.size());
+        QVERIFY(!frosted.hasAlphaChannel());
+
+        int largestStep = 0;
+        const int row = frosted.height() / 2;
+        for (int x = 1; x < frosted.width(); ++x) {
+            const QColor left = frosted.pixelColor(x - 1, row);
+            const QColor right = frosted.pixelColor(x, row);
+            largestStep = std::max(
+                {largestStep, std::abs(left.red() - right.red()),
+                 std::abs(left.blue() - right.blue())});
+        }
+        // The source jumps by 255 every 4px; once frosted, neighbours differ only slightly.
+        QVERIFY2(largestStep < 16, qPrintable(QString::number(largestStep)));
+    }
+
     void MainWindowRendersAirPods5()
     {
         Core::AirPods::State state;

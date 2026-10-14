@@ -51,10 +51,6 @@ constexpr DWORD kDwmwaUseImmersiveDarkModeBefore20H1 = 19;
 constexpr DWORD kDwmwaUseImmersiveDarkMode = 20;
 constexpr DWORD kDwmwaWindowCornerPreference = 33;
 constexpr DWORD kDwmwcpRoundSmall = 3;
-constexpr DWORD kDwmwaSystemBackdropType = 38;
-// The "transient window" material: Windows' own choice for flyouts and context menus, matching
-// how the AirPods popup behaves (auto-hiding, not a persistent app window).
-constexpr DWORD kDwmsbtTransientWindow = 4;
 #endif
 
 constexpr auto kDefaultAccent = "#0067C0";
@@ -985,43 +981,6 @@ void Manager::ApplyToWindow(QWidget *topLevel)
         DWORD preference = kDwmwcpRoundSmall;
         DwmSetWindowAttribute(hwnd, kDwmwaWindowCornerPreference, &preference, sizeof(preference));
     }
-#endif
-}
-
-bool Manager::ApplyPopupBackdrop(QWidget *popup)
-{
-#if defined APD_OS_WIN
-    if (popup == nullptr || !popup->isWindow() || !Core::OS::Windows::System::Is11OrGreater()) {
-        return false;
-    }
-
-    auto *window = popup->windowHandle();
-    if (window == nullptr) {
-        return false;
-    }
-
-    const auto hwnd = reinterpret_cast<HWND>(window->winId());
-    if (hwnd == nullptr) {
-        return false;
-    }
-
-    // Keep the backdrop's own chrome (and any system-drawn shadow) in step with the app's chosen
-    // mode rather than the raw system setting, the same as every other top-level window.
-    BOOL dark = _impl->palette.dark ? TRUE : FALSE;
-    if (FAILED(DwmSetWindowAttribute(hwnd, kDwmwaUseImmersiveDarkMode, &dark, sizeof(dark)))) {
-        DwmSetWindowAttribute(hwnd, kDwmwaUseImmersiveDarkModeBefore20H1, &dark, sizeof(dark));
-    }
-
-    DWORD cornerPreference = kDwmwcpRoundSmall;
-    DwmSetWindowAttribute(
-        hwnd, kDwmwaWindowCornerPreference, &cornerPreference, sizeof(cornerPreference));
-
-    DWORD backdropType = kDwmsbtTransientWindow;
-    return SUCCEEDED(
-        DwmSetWindowAttribute(hwnd, kDwmwaSystemBackdropType, &backdropType, sizeof(backdropType)));
-#else
-    Q_UNUSED(popup)
-    return false;
 #endif
 }
 

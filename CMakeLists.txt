@@ -348,6 +348,7 @@ set(
     APD_GUI_CODE_FILES
 
     "Source/Gui/AnimationPlayback.cpp"
+    "Source/Gui/FrostedBackdrop.cpp"
 
     "Source/Gui/TrayIcon.cpp"
     "Source/Gui/TaskbarStatus.cpp"

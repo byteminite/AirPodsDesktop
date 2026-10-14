@@ -22,6 +22,7 @@
 #include <QCursor>
 #include <QFontMetrics>
 #include <QPainter>
+#include <QPainterPath>
 #include <QMessageBox>
 #include <QCloseEvent>
 #include <QEnterEvent>
@@ -34,6 +35,7 @@
 #include "UpdateWindow.h"
 #include "SelectWindow.h"
 #include "Theme.h"
+#include "FrostedBackdrop.h"
 
 using namespace std::chrono_literals;
 
@@ -521,15 +523,16 @@ void MainWindow::ApplyTheme()
                 colors.mainAccentBgHover.name(), colors.mainAccentBgPressed.name()));
 
     _closeButton->update();
-    RefreshBackdrop();
+    update();
 }
 
-void MainWindow::RefreshBackdrop()
+void MainWindow::CaptureBackdrop(QScreen *screen, const QRect &globalRect)
 {
-    // A no-op (and returns false) until the native window handle exists, i.e. before the first
-    // show(); `showEvent` calls this again once it does.
-    _hasFrostedBackdrop = Theme::Manager::Instance().ApplyPopupBackdrop(this);
-    update();
+    // Called before the native window is mapped (and while it still sits below the screen edge on
+    // later shows), so the grab never contains the popup itself.
+    const auto local = globalRect.translated(-screen->geometry().topLeft());
+    const auto shot = screen->grabWindow(0, local.x(), local.y(), local.width(), local.height());
+    _backdrop = shot.isNull() ? QImage{} : FrostBackdrop(shot.toImage());
 }
 
 void MainWindow::paintEvent(QPaintEvent *event)
@@ -539,11 +542,24 @@ void MainWindow::paintEvent(QPaintEvent *event)
     const auto &colors = Theme::Manager::Instance().Colors();
 
     QPainter painter{this};
-    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setRenderHints(QPainter::Antialiasing | QPainter::SmoothPixmapTransform);
     painter.setPen(Qt::NoPen);
-    painter.setBrush(_hasFrostedBackdrop ? colors.mainGlassTint : colors.mainSurface);
-    const auto radius = _hasFrostedBackdrop ? _windowCornerRadiusGlass : _windowCornerRadiusSolid;
-    painter.drawRoundedRect(QRectF{rect()}, radius, radius);
+
+    QPainterPath shape;
+    shape.addRoundedRect(QRectF{rect()}, _windowCornerRadius, _windowCornerRadius);
+
+    if (_backdrop.isNull()) {
+        painter.fillPath(shape, colors.mainSurface);
+        return;
+    }
+
+    // Draw the frosted snapshot through an antialiased rounded-rect brush rather than a clip
+    // path: Qt's clipping is binary, which would bring back stepped corners.
+    QBrush backdropBrush{_backdrop};
+    backdropBrush.setTransform(QTransform::fromScale(
+        qreal(width()) / _backdrop.width(), qreal(height()) / _backdrop.height()));
+    painter.fillPath(shape, backdropBrush);
+    painter.fillPath(shape, colors.mainGlassTint);
 }
 
 void MainWindow::FitDeviceLabelFont(const QString &text)
@@ -635,9 +651,6 @@ void MainWindow::DoHide()
 void MainWindow::showEvent(QShowEvent *event)
 {
     QDialog::showEvent(event);
-    // The native window handle only exists once shown; `ApplyTheme()` tried this already in the
-    // constructor and silently no-opped.
-    RefreshBackdrop();
     BeginShow(true);
 }
 
@@ -685,6 +698,7 @@ void MainWindow::BeginShow(bool fromHidden)
 
     _posAnimation.stop();
     if (fromHidden || changingScreen) {
+        CaptureBackdrop(targetScreen, QRect{target, size()});
         // Resolve the native monitor and its DPI inside the destination screen before
         // positioning the slide origin outside it.
         move(target);

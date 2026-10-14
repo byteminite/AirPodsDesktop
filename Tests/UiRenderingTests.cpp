@@ -6,6 +6,7 @@
 #include <QDialogButtonBox>
 #include <QDesktopServices>
 #include <QDir>
+#include <QScreen>
 #include <QFontDatabase>
 #include <QLabel>
 #include <QListWidget>
@@ -957,6 +958,20 @@ private Q_SLOTS:
         tray.ShowContextMenu(QPoint{100, 100});
         QVERIFY(QTest::qWaitForWindowExposed(menu));
         QVERIFY(menu->grab().save(QStringLiteral(APD_BINARY_DIR "/UiValidation/tray-menu-battery.png")));
+        QTest::keyClick(menu, Qt::Key_Escape);
+        QTRY_VERIFY(!menu->isVisible());
+
+        // Opened at the taskbar edge, as from the tray, the menu keeps a gap above it.
+        const auto available = QGuiApplication::primaryScreen()->availableGeometry();
+        tray.ShowContextMenu(available.bottomRight());
+        QVERIFY(QTest::qWaitForWindowExposed(menu));
+        constexpr int kVisibleGap = 12;
+        const auto surfaceBottom = menu->geometry().bottom() - 3; // painted surface inset
+        const auto surfaceRight = menu->geometry().right() - 3;
+        QVERIFY2(
+            available.bottom() - surfaceBottom >= kVisibleGap,
+            qPrintable(QString{"gap %1"}.arg(available.bottom() - surfaceBottom)));
+        QVERIFY(available.right() - surfaceRight >= kVisibleGap);
         QTest::keyClick(menu, Qt::Key_Escape);
         QTRY_VERIFY(!menu->isVisible());
     }

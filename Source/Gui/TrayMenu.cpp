@@ -18,6 +18,8 @@
 
 #include "TrayMenu.h"
 
+#include <algorithm>
+
 #include <QGuiApplication>
 #include <QPainter>
 #include <QPainterPath>
@@ -33,6 +35,8 @@ namespace {
 constexpr auto kCheckIcon = ":/Resource/Image/Menu/Check.svg";
 constexpr int kCheckSize = 14;
 constexpr int kItemSidePadding = 10;
+// Gap between the menu and the screen's work-area edges (the taskbar), as Windows 11 menus keep.
+constexpr int kScreenGap = 12;
 
 QString Rgba(const QColor &color)
 {
@@ -80,10 +84,26 @@ void TrayMenu::showEvent(QShowEvent *event)
 {
     // QShowEvent arrives before the native window is mapped, and `popup()` has already placed
     // the menu, so the grab sees exactly what the menu is about to cover.
-    const auto area = geometry();
+    auto area = geometry();
     auto *screen = QGuiApplication::screenAt(area.center());
     if (screen == nullptr) {
         screen = this->screen();
+    }
+    if (screen != nullptr) {
+        // Qt places the menu flush against the taskbar; lift it off the edges a little. The
+        // painted surface is already inset by `kSurfaceInset`, so subtract that from the gap.
+        const auto bounds = screen->availableGeometry().adjusted(
+            kScreenGap - kSurfaceInset, kScreenGap - kSurfaceInset, kSurfaceInset - kScreenGap,
+            kSurfaceInset - kScreenGap);
+        auto moved = area;
+        moved.moveRight((std::min)(moved.right(), bounds.right()));
+        moved.moveBottom((std::min)(moved.bottom(), bounds.bottom()));
+        moved.moveLeft((std::max)(moved.left(), bounds.left()));
+        moved.moveTop((std::max)(moved.top(), bounds.top()));
+        if (moved.topLeft() != area.topLeft()) {
+            move(moved.topLeft());
+            area = moved;
+        }
     }
     _backdrop = {};
     if (screen != nullptr) {

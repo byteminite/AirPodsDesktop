@@ -249,6 +249,7 @@ Palette BuildPalette(const SystemTheme &system)
         p.popupBorder = QColor{"#C7C7CC"};
 
         p.mainSurface = QColor{"#FFFFFF"};
+        p.mainGlassTint = QColor{246, 246, 248, 90}; // rgba(246,246,248,.35)
         p.mainText = QColor{"#1B1B1B"};
         p.mainTextSecondary = QColor{"#5E5E5E"};
         p.mainCloseBg = QColor{"#EEEEEF"};
@@ -256,6 +257,7 @@ Palette BuildPalette(const SystemTheme &system)
         p.mainClosePressed = QColor{"#DADADB"};
         p.mainCloseGlyph = QColor{"#838387"};
         p.batteryBorder = QColor{"#8E8E93"};
+        p.batteryTrack = QColor{60, 60, 67, 36}; // rgba(60,60,67,.14)
 
         p.accent = system.accentForLight.value_or(system.accent.darker(110));
     }
@@ -276,6 +278,7 @@ Palette BuildPalette(const SystemTheme &system)
         p.popupBorder = QColor{"#545458"};
 
         p.mainSurface = QColor{"#1C1C1E"};
+        p.mainGlassTint = QColor{30, 30, 32, 90}; // rgba(30,30,32,.35)
         p.mainText = QColor{"#F2F2F7"};
         p.mainTextSecondary = QColor{"#A1A1A6"};
         p.mainCloseBg = QColor{"#2C2C2E"};
@@ -283,6 +286,7 @@ Palette BuildPalette(const SystemTheme &system)
         p.mainClosePressed = QColor{"#48484A"};
         p.mainCloseGlyph = QColor{"#A1A1A6"};
         p.batteryBorder = QColor{"#636366"};
+        p.batteryTrack = QColor{120, 120, 128, 82}; // rgba(120,120,128,.32)
 
         p.accent = system.accentForDark.value_or(system.accent.lighter(135));
     }
@@ -291,6 +295,12 @@ Palette BuildPalette(const SystemTheme &system)
     p.batteryNormal = QColor{"#34C759"};
     p.batteryAlarm = QColor{"#FF3B30"};
     p.errorText = p.dark ? QColor{"#FF453A"} : QColor{"#FF3B30"};
+
+    // Apple's system blue, fixed in both modes (F002 popup "Bind to AirPods" button).
+    p.mainAccentBg = QColor{"#0A84FF"};
+    p.mainAccentBgHover = Mix(p.mainAccentBg, p.mainSurface, 0.10);
+    p.mainAccentBgPressed = Mix(p.mainAccentBg, p.mainSurface, 0.20);
+    p.mainAccentText = AccessibleForeground(p.mainAccentBg);
 
     // Preserve the system accent preference while using macOS-like pressed-state blending.
     p.accentHover = Mix(p.accent, p.surface, 0.10);

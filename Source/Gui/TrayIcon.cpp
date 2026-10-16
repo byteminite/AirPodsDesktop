@@ -30,6 +30,11 @@
 #include <algorithm>
 
 #include <Config.h>
+
+#if defined APD_OS_WIN
+    #include <Windows.h>
+#endif
+
 namespace Gui {
 namespace {
 
@@ -170,6 +175,11 @@ void TrayIcon::ShowMainWindow()
 void TrayIcon::ShowContextMenu(const QPoint &position)
 {
     _menu->popup(position);
+#if defined APD_OS_WIN
+    // A menu that is not the foreground window neither closes on a click elsewhere nor stays above
+    // the taskbar. The app already holds the foreground (see `OnIconClicked`), so this is allowed.
+    SetForegroundWindow(reinterpret_cast<HWND>(_menu->winId()));
+#endif
 }
 
 void TrayIcon::Repaint()
@@ -391,6 +401,14 @@ void TrayIcon::OnIconClicked(QSystemTrayIcon::ActivationReason reason)
     case SingleClickTimer::Start:
         // Read the interval each time; the user can change it in Windows while we are running.
         _singleClickPosition = QCursor::pos();
+#if defined APD_OS_WIN
+        // Windows lets an app come to the foreground only while handling the click itself; any
+        // mouse movement during the double-click wait takes that right away again. Take the
+        // foreground now (on this never-shown window, as Qt does for a right click) so the menu
+        // opened after the wait can be activated: only then does it close on a click elsewhere
+        // and stay above the taskbar.
+        SetForegroundWindow(reinterpret_cast<HWND>(winId()));
+#endif
         _singleClickTimer.start(QApplication::doubleClickInterval());
         break;
     case SingleClickTimer::Stop:

@@ -390,6 +390,7 @@ void TrayIcon::OnIconClicked(QSystemTrayIcon::ActivationReason reason)
     switch (result.timer) {
     case SingleClickTimer::Start:
         // Read the interval each time; the user can change it in Windows while we are running.
+        _singleClickPosition = QCursor::pos();
         _singleClickTimer.start(QApplication::doubleClickInterval());
         break;
     case SingleClickTimer::Stop:
@@ -413,7 +414,7 @@ void TrayIcon::ExecuteTrayActivation(TrayActivationAction action)
         ShowMainWindow();
     }
     else if (action == TrayActivationAction::ShowMenu) {
-        ShowContextMenu(QCursor::pos());
+        ShowContextMenu(_singleClickPosition);
     }
 }
 

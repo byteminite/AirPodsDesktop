@@ -101,6 +101,9 @@ private:
     Core::QuickConnect::Controller &_quickConnect;
     TrayActivationState _trayActivationState;
     QTimer _singleClickTimer{this};
+    // Where the pending single click happened; the menu opens there, not wherever the mouse has
+    // moved to by the time the double-click interval runs out.
+    QPoint _singleClickPosition;
 
     void ShowMainWindow();
     void Repaint();

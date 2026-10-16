@@ -22,6 +22,7 @@
 #include <thread>
 
 #include <QDialog>
+#include <QImage>
 
 #include "ui_MainWindow.h"
 
@@ -34,7 +35,7 @@
 #include "../Core/AirPods.h"
 #include "../Core/Update.h"
 #include "Base.h"
-#include "Widget/Battery.h"
+#include "Widget/BatteryRow.h"
 #include "Widget/AnimationView.h"
 
 namespace Gui {
@@ -72,11 +73,12 @@ Q_SIGNALS:
     void HideSafely();
     bool VersionUpdateAvailableSafely(const Core::Update::ReleaseInfo &releaseInfo, bool silent);
     void SilentUpdateAvailable(const Core::Update::ReleaseInfo &releaseInfo);
+    void VisibilityChanged(bool visible);
 
 private:
-    constexpr static QSize _windowSize{320, 300};
+    constexpr static QSize _windowSize{320, 316};
     constexpr static QSize _screenMargin{24, 24};
-    constexpr static qreal _windowCornerRadius = 32.0;
+    constexpr static qreal _windowCornerRadius = 8.0;
     constexpr static int _deviceLabelMaximumPointSize = 18;
     constexpr static int _deviceLabelMinimumPointSize = 12;
 
@@ -87,9 +89,9 @@ private:
     AnimationPlayback *_playback;
     QTimer *_autoHideTimer = new QTimer{this};
     CloseButton *_closeButton;
-    Widget::Battery *_leftBattery = new Widget::Battery{this};
-    Widget::Battery *_rightBattery = new Widget::Battery{this};
-    Widget::Battery *_caseBattery = new Widget::Battery{this};
+    Widget::BatteryRow *_leftBattery = new Widget::BatteryRow{this};
+    Widget::BatteryRow *_rightBattery = new Widget::BatteryRow{this};
+    Widget::BatteryRow *_caseBattery = new Widget::BatteryRow{this};
 
     Core::Update::AsyncChecker _updateChecker{[this](auto &&...args) {
         VersionUpdateAvailableSafely(std::forward<decltype(args)>(args)...);
@@ -98,6 +100,9 @@ private:
     ButtonAction _buttonAction{ButtonAction::NoButton};
     MainWindowViewModel _viewModel;
     bool _isVisible{false};
+    // Frosted snapshot of what sits behind the popup, taken just before it slides in. Null until
+    // the first show or if the screen grab fails, in which case the opaque surface is painted.
+    QImage _backdrop;
     std::atomic<bool> _deviceQueryRunning{false};
     std::jthread _deviceQueryThread;
 
@@ -111,6 +116,7 @@ private:
     void VersionUpdateAvailable(const Core::Update::ReleaseInfo &releaseInfo, bool silent);
     void Repaint();
     void ApplyTheme();
+    void CaptureBackdrop(QScreen *screen, const QRect &globalRect);
     void FitDeviceLabelFont(const QString &text);
 
     void OnAppStateChanged(Qt::ApplicationState state);

@@ -306,6 +306,9 @@ void ApdApplication::ConnectGuiComponents()
     connect(
         _mainWindow.get(), &Gui::MainWindow::SilentUpdateAvailable, _trayIcon.get(),
         &Gui::TrayIcon::VersionUpdateAvailable);
+    connect(
+        _mainWindow.get(), &Gui::MainWindow::VisibilityChanged, _trayIcon.get(),
+        &Gui::TrayIcon::SetPopupVisible);
 }
 
 int ApdApplication::Run()

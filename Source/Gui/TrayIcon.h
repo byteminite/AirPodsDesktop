@@ -18,12 +18,15 @@
 
 #pragma once
 
+#include <memory>
+
 #include <functional>
 
 #include <QSystemTrayIcon>
 #include <QTimer>
 #include <QMenu>
 #include <QAction>
+#include <QWidgetAction>
 
 #include "../Core/AirPods.h"
 #include "../Core/QuickConnect.h"
@@ -31,6 +34,9 @@
 #include "Base.h"
 #include "TrayActivation.h"
 #include "SettingsWindow.h"
+#include "TrayMenu.h"
+#include "QuickConnectBanner.h"
+#include "Widget/TrayBatteryHeader.h"
 
 namespace Gui {
 
@@ -53,6 +59,8 @@ public:
     void Disconnect();
     void Unbind();
     void VersionUpdateAvailable(const Core::Update::ReleaseInfo &releaseInfo);
+    // The popup already shows the AirPods; no quick-connect banner appears beside it.
+    void SetPopupVisible(bool visible);
     void ShowContextMenu(const QPoint &position);
 
 Q_SIGNALS:
@@ -64,14 +72,18 @@ Q_SIGNALS:
 
 private:
     struct IconRenderState {
-        std::optional<QString> text;
+        std::optional<Core::AirPods::Battery::ValueType> battery;
         bool showUpdateDot{false};
+        // The glyph follows the taskbar, i.e. the Windows *system* theme, not the app's mode.
+        bool systemDark{true};
 
         bool operator==(const IconRenderState &rhs) const = default;
     };
 
     QSystemTrayIcon *_tray = new QSystemTrayIcon{this};
-    QMenu *_menu = new QMenu{this};
+    TrayMenu *_menu = new TrayMenu{this};
+    Widget::TrayBatteryHeader *_header = new Widget::TrayBatteryHeader;
+    QWidgetAction *_headerAction = new QWidgetAction{this};
     QAction *_actionNewVersion = new QAction{tr("New version available!"), this};
     QAction *_actionLowAudioLatency = new QAction{tr("Low audio latency (may cause hiss)"), this};
     QAction *_actionSettings = new QAction{tr("Settings"), this};
@@ -84,16 +96,24 @@ private:
     std::optional<QString> _displayName;
     std::optional<Core::Update::ReleaseInfo> _updateReleaseInfo;
     std::optional<IconRenderState> _lastIconRenderState;
+    std::unique_ptr<QuickConnectBanner> _banner = std::make_unique<QuickConnectBanner>();
+    bool _popupVisible{false};
     Core::QuickConnect::Controller &_quickConnect;
     TrayActivationState _trayActivationState;
     QTimer _singleClickTimer{this};
+    // Where the pending single click happened; the menu opens there, not wherever the mouse has
+    // moved to by the time the double-click interval runs out.
+    QPoint _singleClickPosition;
 
     void ShowMainWindow();
     void Repaint();
     void ExecuteTrayActivation(TrayActivationAction action);
+    void ApplyTheme();
 
-    static std::optional<QImage>
-    GenerateIcon(int size, const std::optional<QString> &optText, const std::optional<QColor> &dot);
+    static std::optional<QImage> GenerateIcon(
+        int size, const QColor &glyph,
+        const std::optional<Core::AirPods::Battery::ValueType> &battery,
+        const std::optional<QColor> &dot);
 
     void OnNewVersionClicked();
     void OnSettingsClicked();

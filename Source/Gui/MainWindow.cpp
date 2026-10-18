@@ -22,6 +22,7 @@
 #include <QCursor>
 #include <QFontMetrics>
 #include <QPainter>
+#include <QPainterPath>
 #include <QMessageBox>
 #include <QCloseEvent>
 #include <QEnterEvent>
@@ -34,6 +35,7 @@
 #include "UpdateWindow.h"
 #include "SelectWindow.h"
 #include "Theme.h"
+#include "FrostedBackdrop.h"
 
 using namespace std::chrono_literals;
 
@@ -146,6 +148,9 @@ MainWindow::MainWindow(QWidget *parent) : QDialog{parent}
     _animationView = new Widget::AnimationView{this};
     _playback = new AnimationPlayback{*_animationView, this};
     _closeButton = new CloseButton{this};
+    _leftBattery->setObjectName("leftBatteryRow");
+    _rightBattery->setObjectName("rightBatteryRow");
+    _caseBattery->setObjectName("caseBatteryRow");
 
     _ui.setupUi(this);
 
@@ -157,8 +162,6 @@ MainWindow::MainWindow(QWidget *parent) : QDialog{parent}
     setAttribute(Qt::WA_TranslucentBackground);
     setAutoFillBackground(false);
     setProperty(Theme::Manager::kSkipDwmProperty, true);
-
-    _ui.pushButton->setProperty("cssClass", "accent");
 
     auto titleFont = _ui.deviceLabel->font();
     titleFont.setWeight(QFont::DemiBold);
@@ -191,9 +194,9 @@ MainWindow::MainWindow(QWidget *parent) : QDialog{parent}
     _autoHideTimer->callOnTimeout([this] { DoHide(); });
 
     _ui.layoutAnimation->addWidget(_animationView);
-    _ui.layoutPods->addWidget(_leftBattery);
-    _ui.layoutPods->addWidget(_rightBattery);
-    _ui.layoutCase->addWidget(_caseBattery);
+    _ui.layoutBatteryRows->addWidget(_leftBattery);
+    _ui.layoutBatteryRows->addWidget(_rightBattery);
+    _ui.layoutBatteryRows->addWidget(_caseBattery);
     _ui.layoutClose->addWidget(_closeButton);
 
     // For getting the correct initial height of `_animationView` later
@@ -308,10 +311,15 @@ void MainWindow::ChangeButtonAction(ButtonAction action)
     case ButtonAction::NoButton:
         _ui.pushButton->setText("");
         _ui.pushButton->hide();
+        _ui.bindHintLabel->hide();
+        _ui.batteryRowsContainer->show();
         return;
 
     case ButtonAction::Bind:
         _ui.pushButton->setText(tr("Bind to AirPods"));
+        _ui.bindHintLabel->setText(tr("Choose your AirPods to see their battery here."));
+        _ui.bindHintLabel->show();
+        _ui.batteryRowsContainer->hide();
         break;
 
     default:
@@ -471,20 +479,20 @@ void MainWindow::Repaint()
     ChangeButtonAction(presentation.buttonAction);
     SetAnimation(presentation.animationModel);
 
-    const auto applyBattery = [](Widget::Battery *widget, const BatteryPresentation &battery) {
-        if (!battery.visible) {
-            widget->hide();
-            return;
-        }
+    // A side with no battery reading stays in the row list, dimmed, rather than disappearing and
+    // shifting the other rows - matches the approved F002 mockup.
+    const auto applyBattery =
+        [](Widget::BatteryRow *widget, const QString &label, const BatteryPresentation &battery) {
+            widget->SetLabel(label);
+            widget->SetValue(
+                battery.visible ? std::optional<Widget::BatteryRow::ValueType>{battery.value}
+                                : std::nullopt);
+            widget->SetCharging(battery.visible && battery.charging);
+        };
 
-        widget->setCharging(battery.charging);
-        widget->setValue(battery.value);
-        widget->show();
-    };
-
-    applyBattery(_leftBattery, presentation.leftBattery);
-    applyBattery(_rightBattery, presentation.rightBattery);
-    applyBattery(_caseBattery, presentation.caseBattery);
+    applyBattery(_leftBattery, tr("Left"), presentation.leftBattery);
+    applyBattery(_rightBattery, tr("Right"), presentation.rightBattery);
+    applyBattery(_caseBattery, tr("Case"), presentation.caseBattery);
 }
 
 void MainWindow::ApplyTheme()
@@ -493,31 +501,65 @@ void MainWindow::ApplyTheme()
 
     Utils::Qt::SetPaletteColor(this, QPalette::Window, colors.mainSurface);
     Utils::Qt::SetPaletteColor(_ui.deviceLabel, QPalette::WindowText, colors.mainText);
+    Utils::Qt::SetPaletteColor(_ui.bindHintLabel, QPalette::WindowText, colors.mainTextSecondary);
 
     for (auto *battery : {_leftBattery, _rightBattery, _caseBattery}) {
-        battery->setNormalColor(colors.batteryNormal);
-        battery->setAlarmColor(colors.batteryAlarm);
-        battery->setBorderColor(colors.batteryBorder);
-        battery->setChargingIconColor(colors.mainText);
-        battery->setBorderRadius(4);
-        battery->setBackgroundRadius(2.5);
-        battery->setHeadRadius(1.5);
-        Utils::Qt::SetPaletteColor(battery, QPalette::WindowText, colors.mainText);
+        battery->SetNormalColor(colors.batteryNormal);
+        battery->SetLowColor(colors.batteryAlarm);
+        battery->SetTrackColor(colors.batteryTrack);
+        battery->SetLabelColor(colors.mainText);
+        battery->SetValueColor(colors.mainText);
+        battery->update();
     }
+
+    // Apple blue, not the shared `cssClass="accent"` rule the rest of the app uses - this button
+    // alone follows the F002 popup's own palette (see Theme::Palette::mainAccentBg).
+    _ui.pushButton->setStyleSheet(
+        QString{"QPushButton { background: %1; color: %2; border: none; border-radius: 6px; }"
+                "QPushButton:hover { background: %3; }"
+                "QPushButton:pressed { background: %4; }"}
+            .arg(
+                colors.mainAccentBg.name(), colors.mainAccentText.name(),
+                colors.mainAccentBgHover.name(), colors.mainAccentBgPressed.name()));
 
     _closeButton->update();
     update();
+}
+
+void MainWindow::CaptureBackdrop(QScreen *screen, const QRect &globalRect)
+{
+    // Called before the native window is mapped (and while it still sits below the screen edge on
+    // later shows), so the grab never contains the popup itself.
+    const auto local = globalRect.translated(-screen->geometry().topLeft());
+    const auto shot = screen->grabWindow(0, local.x(), local.y(), local.width(), local.height());
+    _backdrop = shot.isNull() ? QImage{} : FrostBackdrop(shot.toImage());
 }
 
 void MainWindow::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event);
 
+    const auto &colors = Theme::Manager::Instance().Colors();
+
     QPainter painter{this};
-    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setRenderHints(QPainter::Antialiasing | QPainter::SmoothPixmapTransform);
     painter.setPen(Qt::NoPen);
-    painter.setBrush(Theme::Manager::Instance().Colors().mainSurface);
-    painter.drawRoundedRect(QRectF{rect()}, _windowCornerRadius, _windowCornerRadius);
+
+    QPainterPath shape;
+    shape.addRoundedRect(QRectF{rect()}, _windowCornerRadius, _windowCornerRadius);
+
+    if (_backdrop.isNull()) {
+        painter.fillPath(shape, colors.mainSurface);
+        return;
+    }
+
+    // Draw the frosted snapshot through an antialiased rounded-rect brush rather than a clip
+    // path: Qt's clipping is binary, which would bring back stepped corners.
+    QBrush backdropBrush{_backdrop};
+    backdropBrush.setTransform(QTransform::fromScale(
+        qreal(width()) / _backdrop.width(), qreal(height()) / _backdrop.height()));
+    painter.fillPath(shape, backdropBrush);
+    painter.fillPath(shape, colors.mainGlassTint);
 }
 
 void MainWindow::FitDeviceLabelFont(const QString &text)
@@ -651,11 +693,13 @@ void MainWindow::BeginShow(bool fromHidden)
         return;
     }
     _isVisible = true;
+    emit VisibilityChanged(true);
     PlayAnimation();
     ControlAutoHideTimer(true);
 
     _posAnimation.stop();
     if (fromHidden || changingScreen) {
+        CaptureBackdrop(targetScreen, QRect{target, size()});
         // Resolve the native monitor and its DPI inside the destination screen before
         // positioning the slide origin outside it.
         move(target);
@@ -670,6 +714,7 @@ void MainWindow::BeginShow(bool fromHidden)
 void MainWindow::hideEvent(QHideEvent *event)
 {
     _isVisible = false;
+    emit VisibilityChanged(false);
     _posAnimation.stop();
     ControlAutoHideTimer(false);
     StopAnimation();

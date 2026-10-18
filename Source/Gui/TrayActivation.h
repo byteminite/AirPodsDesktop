@@ -22,7 +22,7 @@
 
 namespace Gui {
 
-enum class TrayActivationAction { None, ShowMainWindow, QuickConnect };
+enum class TrayActivationAction { None, ShowMainWindow, ShowMenu, QuickConnect };
 
 enum class SingleClickTimer { Unchanged, Start, Stop };
 
@@ -44,15 +44,20 @@ public:
     {
         switch (reason) {
         case QSystemTrayIcon::Trigger:
-            if (!quickConnectEnabled) {
-                return {TrayActivationAction::ShowMainWindow, SingleClickTimer::Stop};
-            }
-            // Wait out the double-click interval: Windows reports the first click of a double
-            // click as a Trigger too, and that one must open the window instead of connecting.
+            // A single click opens the tray menu. Wait out the double-click interval first:
+            // Windows reports the first click of a double click as a Trigger too, and a menu
+            // opened by it would swallow the second click.
             _singleClickPending = true;
             return {TrayActivationAction::None, SingleClickTimer::Start};
 
         case QSystemTrayIcon::DoubleClick:
+            // A double click connects the chosen device, or opens the popup without quick connect.
+            _singleClickPending = false;
+            return {
+                quickConnectEnabled ? TrayActivationAction::QuickConnect
+                                    : TrayActivationAction::ShowMainWindow,
+                SingleClickTimer::Stop};
+
         case QSystemTrayIcon::MiddleClick:
             _singleClickPending = false;
             return {TrayActivationAction::ShowMainWindow, SingleClickTimer::Stop};
@@ -74,7 +79,7 @@ public:
         }
 
         _singleClickPending = false;
-        return TrayActivationAction::QuickConnect;
+        return TrayActivationAction::ShowMenu;
     }
 
 private:

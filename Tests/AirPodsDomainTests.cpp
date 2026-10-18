@@ -12,6 +12,7 @@
 #include "Source/Core/Settings.h"
 #include "Source/Core/SettingsRepository.h"
 #include "Source/Core/Update.h"
+#include "Source/Gui/BatteryAlerts.h"
 #include "Source/Gui/MainWindowPresentation.h"
 #include "Source/Gui/TaskbarGeometry.h"
 
@@ -180,6 +181,9 @@ private Q_SLOTS:
     void PresentsMainWindowCaseBattery();
     void MapsMainWindowAnimationResources();
     void ConvertsTaskbarGeometryAcrossDpiBoundaries();
+    void WarnsOncePerBatteryThreshold();
+    void ReArmsAndCombinesBatteryWarnings();
+    void NoticesFullChargeOnce();
 };
 
 void AirPodsDomainTests::RejectsMalformedPackets()
@@ -771,6 +775,122 @@ void AirPodsDomainTests::ConvertsTaskbarGeometryAcrossDpiBoundaries()
         Gui::TaskbarGeometry::CalculateLayout(QSize{50, 1440}, QRect{0, 120, 50, 1270}, 120, false);
     QCOMPARE(vertical.statusLogical, QRect(0, 1112, 40, 40));
     QCOMPARE(vertical.taskButtonsNative, QRect(0, 120, 50, 1270));
+}
+
+namespace {
+
+using Alert = Gui::BatteryAlert;
+
+// A state with the given readings; nullopt means that side isn't reporting.
+Core::AirPods::State BatteryState(
+    std::optional<uint32_t> left, std::optional<uint32_t> right, std::optional<uint32_t> caseBox = {},
+    bool podsCharging = false, bool caseCharging = false)
+{
+    Core::AirPods::State state;
+    state.model = Core::AirPods::Model::AirPods_Pro_2;
+    if (left) {
+        state.pods.left.battery = *left;
+        state.pods.left.isCharging = podsCharging;
+    }
+    if (right) {
+        state.pods.right.battery = *right;
+        state.pods.right.isCharging = podsCharging;
+    }
+    if (caseBox) {
+        state.caseBox.battery = *caseBox;
+        state.caseBox.isCharging = caseCharging;
+    }
+    return state;
+}
+
+std::optional<Alert> Low(Alert::Side side, uint32_t percent)
+{
+    return Alert{Alert::Kind::Low, side, percent};
+}
+
+} // namespace
+
+void AirPodsDomainTests::WarnsOncePerBatteryThreshold()
+{
+    Gui::BatteryAlertPolicy policy;
+    QCOMPARE(policy.OnState(BatteryState(40, 50), true, true), std::nullopt);
+    QCOMPARE(policy.OnState(BatteryState(30, 50), true, true), std::nullopt);
+    QCOMPARE(policy.OnState(BatteryState(20, 50), true, true), Low(Alert::Side::Left, 20));
+    QCOMPARE(policy.OnState(BatteryState(20, 50), true, true), std::nullopt);
+    QCOMPARE(policy.OnState(BatteryState(10, 50), true, true), Low(Alert::Side::Left, 10));
+    QCOMPARE(policy.OnState(BatteryState(10, 50), true, true), std::nullopt);
+
+    // A missing reading (the earbud stopped reporting) changes nothing, and a reconnect at the
+    // same level doesn't replay the warning.
+    QCOMPARE(policy.OnState(BatteryState(std::nullopt, std::nullopt), true, true), std::nullopt);
+    QCOMPARE(policy.OnState(BatteryState(10, 50), true, true), std::nullopt);
+
+    // The case never gets a low warning.
+    QCOMPARE(policy.OnState(BatteryState(10, 50, 10), true, true), std::nullopt);
+
+    // Connecting with an earbud already low warns straight away, once, at the lowest level.
+    Gui::BatteryAlertPolicy fresh;
+    QCOMPARE(fresh.OnState(BatteryState(50, 10), true, true), Low(Alert::Side::Right, 10));
+    QCOMPARE(fresh.OnState(BatteryState(50, 10), true, true), std::nullopt);
+}
+
+void AirPodsDomainTests::ReArmsAndCombinesBatteryWarnings()
+{
+    Gui::BatteryAlertPolicy policy;
+    QCOMPARE(policy.OnState(BatteryState(10, 50), true, true), Low(Alert::Side::Left, 10));
+
+    // One-step flapping between 10% and 20% never repeats a warning.
+    QCOMPARE(policy.OnState(BatteryState(20, 50), true, true), std::nullopt);
+    QCOMPARE(policy.OnState(BatteryState(10, 50), true, true), std::nullopt);
+
+    // Two steps above re-arms the 10% warning (but not yet the 20% one).
+    QCOMPARE(policy.OnState(BatteryState(30, 50), true, true), std::nullopt);
+    QCOMPARE(policy.OnState(BatteryState(10, 50), true, true), Low(Alert::Side::Left, 10));
+
+    // Charging re-arms everything; a warning never fires while charging.
+    QCOMPARE(policy.OnState(BatteryState(10, 10, std::nullopt, true), true, true), std::nullopt);
+    QCOMPARE(policy.OnState(BatteryState(20, 20, std::nullopt, true), true, true), std::nullopt);
+
+    // Both earbuds crossing in one reading give a single alert.
+    QCOMPARE(policy.OnState(BatteryState(20, 20), true, true), Low(Alert::Side::BothPods, 20));
+
+    // A disabled warning still tracks, so enabling it later doesn't replay the crossing.
+    Gui::BatteryAlertPolicy quiet;
+    QCOMPARE(quiet.OnState(BatteryState(20, 50), false, true), std::nullopt);
+    QCOMPARE(quiet.OnState(BatteryState(20, 50), true, true), std::nullopt);
+    QCOMPARE(quiet.OnState(BatteryState(10, 50), true, true), Low(Alert::Side::Left, 10));
+}
+
+void AirPodsDomainTests::NoticesFullChargeOnce()
+{
+    const auto charged = [](Alert::Side side) {
+        return std::optional{Alert{Alert::Kind::Charged, side, 100}};
+    };
+
+    // A first reading that is already full stays silent.
+    Gui::BatteryAlertPolicy policy;
+    QCOMPARE(policy.OnState(BatteryState(100, 100, 60, true, true), true, true), std::nullopt);
+
+    Gui::BatteryAlertPolicy charging;
+    QCOMPARE(charging.OnState(BatteryState(90, 100, 60, true, true), true, true), std::nullopt);
+    QCOMPARE(
+        charging.OnState(BatteryState(100, 100, 60, true, true), true, true),
+        charged(Alert::Side::BothPods));
+    QCOMPARE(charging.OnState(BatteryState(100, 100, 60, true, true), true, true), std::nullopt);
+
+    // The case's own 100% counts too.
+    QCOMPARE(charging.OnState(BatteryState(100, 100, 90, true, true), true, true), std::nullopt);
+    QCOMPARE(
+        charging.OnState(BatteryState(100, 100, 100, true, true), true, true),
+        charged(Alert::Side::Case));
+
+    // Full but not charging (taken out of the case) is no notice; neither when it is disabled.
+    Gui::BatteryAlertPolicy unplugged;
+    QCOMPARE(unplugged.OnState(BatteryState(90, 90), true, true), std::nullopt);
+    QCOMPARE(unplugged.OnState(BatteryState(100, 100), true, true), std::nullopt);
+    Gui::BatteryAlertPolicy disabled;
+    QCOMPARE(disabled.OnState(BatteryState(90, 90, 50, true), true, false), std::nullopt);
+    QCOMPARE(disabled.OnState(BatteryState(100, 100, 50, true), true, false), std::nullopt);
 }
 
 QTEST_GUILESS_MAIN(AirPodsDomainTests)

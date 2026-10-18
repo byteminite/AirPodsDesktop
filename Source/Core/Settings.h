@@ -50,6 +50,7 @@ public:
     virtual void OnLowAudioLatencyChanged(bool enable) = 0;
     virtual void OnAutomaticEarDetectionChanged(bool enable) = 0;
     virtual void OnEarDetectionPauseModeChanged(EarDetection::PauseMode mode) = 0;
+    virtual void OnAutoSwitchAudioOutputChanged(bool enable) = 0;
     virtual void OnRssiMinChanged(int16_t rssiMin) = 0;
     virtual void OnDeviceAddressChanged(uint64_t address) = 0;
     virtual void OnTrayIconBatteryChanged(TrayIconBatteryBehavior behavior) = 0;
@@ -99,7 +100,10 @@ void SetRepository(std::unique_ptr<Repository> repository);
         Impl::Desc{QT_TRANSLATE_NOOP("QObject", "Shows a banner when the AirPods or the case finish charging.")}) \
     callback(EarDetection::PauseMode, ear_detection_pause_mode, {EarDetection::PauseMode::OneEarbud}, \
         Impl::OnApply(&OnApply_ear_detection_pause_mode),                                          \
-        Impl::Desc{QT_TRANSLATE_NOOP("QObject", "Music resumes when the earbuds go back in within 10 minutes.")})
+        Impl::Desc{QT_TRANSLATE_NOOP("QObject", "Music resumes when the earbuds go back in within 10 minutes.")}) \
+    callback(bool, auto_switch_audio_output, {true},                                               \
+        Impl::OnApply(&OnApply_auto_switch_audio_output),                                          \
+        Impl::Desc{QT_TRANSLATE_NOOP("QObject", "Makes the AirPods the Windows sound output when they connect, and puts the previous output back when they disconnect. Calls keep their own device.")})
 // clang-format on
 
 struct Fields {
@@ -262,6 +266,7 @@ void OnApply_rssi_min(const Fields &newFields);
 void OnApply_device_address(const Fields &newFields);
 void OnApply_tray_icon_battery(const Fields &newFields);
 void OnApply_ear_detection_pause_mode(const Fields &newFields);
+void OnApply_auto_switch_audio_output(const Fields &newFields);
 void OnApply_tray_quick_connect_enabled(const Fields &newFields);
 void OnApply_tray_quick_connect_device_id(const Fields &newFields);
 void OnApply_battery_on_taskbar(const Fields &newFields);

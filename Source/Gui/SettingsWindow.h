@@ -92,6 +92,8 @@ private:
             *cbTrayQuickConnectEnabled{};
         Widget::SettingsCard *cardBatteryLowAlert{}, *cardBatteryChargedAlert{};
         Widget::SettingsCard *cardEarDetectionPauseMode{};
+        Widget::SettingsCard *cardAutoSwitchAudioOutput{};
+        Widget::ToggleSwitch *cbAutoSwitchAudioOutput{};
         QComboBox *cbEarDetectionPauseMode{};
         Widget::ToggleSwitch *cbBatteryLowAlert{}, *cbBatteryChargedAlert{};
         QComboBox *cbTrayQuickConnectDevice{};

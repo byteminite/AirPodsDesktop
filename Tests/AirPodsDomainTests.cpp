@@ -12,6 +12,7 @@
 #include "Source/Core/Settings.h"
 #include "Source/Core/SettingsRepository.h"
 #include "Source/Core/Update.h"
+#include "Source/Core/AudioSwitchPolicy.h"
 #include "Source/Core/EarDetection.h"
 #include "Source/Gui/BatteryAlerts.h"
 #include "Source/Gui/MainWindowPresentation.h"
@@ -42,6 +43,7 @@ public:
     void OnLowAudioLatencyChanged(bool) override {}
     void OnAutomaticEarDetectionChanged(bool) override {}
     void OnEarDetectionPauseModeChanged(Core::EarDetection::PauseMode) override {}
+    void OnAutoSwitchAudioOutputChanged(bool) override {}
     void OnRssiMinChanged(int16_t) override {}
     void OnDeviceAddressChanged(uint64_t) override {}
     void OnTrayIconBatteryChanged(Core::Settings::TrayIconBatteryBehavior) override {}
@@ -190,6 +192,8 @@ private Q_SLOTS:
     void EarDetectionBothEarbudsMode();
     void EarDetectionResumeWindowAndGaps();
     void LoadsEarDetectionPauseMode();
+    void SwitchesOutputToAirPodsAndBack();
+    void AudioSwitchRespectsUserChoices();
 };
 
 void AirPodsDomainTests::RejectsMalformedPackets()
@@ -1006,6 +1010,69 @@ void AirPodsDomainTests::LoadsEarDetectionPauseMode()
         Core::EarDetection::PauseMode::BothEarbuds);
 
     Core::Settings::SetRepository(Core::Settings::CreatePersistentRepository());
+}
+
+void AirPodsDomainTests::SwitchesOutputToAirPodsAndBack()
+{
+    const QString speakers{"speakers"}, airPods{"airpods"};
+    Core::AudioSwitch::Policy policy;
+
+    policy.OnConnected();
+    QCOMPARE(policy.OnAirPodsReady(airPods, speakers, true), std::optional{airPods});
+    QCOMPARE(policy.Previous(), std::optional{speakers});
+    // The endpoint flapping later in the same connection doesn't switch again.
+    QCOMPARE(policy.OnAirPodsReady(airPods, airPods, true), std::nullopt);
+    // Our own switch reported back isn't a user choice.
+    policy.OnDefaultChanged(airPods, true);
+    // Windows falling back once the AirPods endpoint is gone isn't one either.
+    policy.OnDefaultChanged(QStringLiteral("monitor"), false);
+    QCOMPARE(policy.OnDisconnected(QStringLiteral("monitor"), true), std::optional{speakers});
+
+    // A new connection remembers the right "previous".
+    policy.OnConnected();
+    QCOMPARE(policy.OnAirPodsReady(airPods, QStringLiteral("monitor"), true), std::optional{airPods});
+    QCOMPARE(policy.OnDisconnected(airPods, true), std::optional{QStringLiteral("monitor")});
+
+    // Already the default (Windows switched by itself): nothing to do, nothing to restore.
+    policy.OnConnected();
+    QCOMPARE(policy.OnAirPodsReady(airPods, airPods, true), std::nullopt);
+    QCOMPARE(policy.OnDisconnected(speakers, true), std::nullopt);
+
+    // Windows already put the previous output back: nothing to do.
+    policy.OnConnected();
+    QCOMPARE(policy.OnAirPodsReady(airPods, speakers, true), std::optional{airPods});
+    QCOMPARE(policy.OnDisconnected(speakers, true), std::nullopt);
+}
+
+void AirPodsDomainTests::AudioSwitchRespectsUserChoices()
+{
+    const QString speakers{"speakers"}, airPods{"airpods"};
+
+    // Turned off: never switches, never restores.
+    Core::AudioSwitch::Policy off;
+    off.OnConnected();
+    QCOMPARE(off.OnAirPodsReady(airPods, speakers, false), std::nullopt);
+    QCOMPARE(off.OnDisconnected(QStringLiteral("monitor"), true), std::nullopt);
+
+    // The user picks another output while connected: not undone on reconnecting endpoints, and
+    // not restored over on disconnect.
+    Core::AudioSwitch::Policy picked;
+    picked.OnConnected();
+    QCOMPARE(picked.OnAirPodsReady(airPods, speakers, true), std::optional{airPods});
+    picked.OnDefaultChanged(QStringLiteral("monitor"), true);
+    QCOMPARE(picked.OnAirPodsReady(airPods, QStringLiteral("monitor"), true), std::nullopt);
+    QCOMPARE(picked.OnDisconnected(QStringLiteral("monitor"), true), std::nullopt);
+
+    // The previous output was unplugged meanwhile: nothing to restore to.
+    Core::AudioSwitch::Policy gone;
+    gone.OnConnected();
+    QCOMPARE(gone.OnAirPodsReady(airPods, speakers, true), std::optional{airPods});
+    QCOMPARE(gone.OnDisconnected(QStringLiteral("monitor"), false), std::nullopt);
+
+    // Disconnect without ever switching (endpoint never ready): nothing to restore.
+    Core::AudioSwitch::Policy never;
+    never.OnConnected();
+    QCOMPARE(never.OnDisconnected(QStringLiteral("monitor"), true), std::nullopt);
 }
 
 QTEST_GUILESS_MAIN(AirPodsDomainTests)

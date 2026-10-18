@@ -308,6 +308,11 @@ SettingsWindow::SettingsWindow(
             }
         });
 
+    connect(_ui.cbAutoSwitchAudioOutput, &QCheckBox::toggled, this, [this](bool checked) {
+        if (_trigger) {
+            ModifiableAccess()->auto_switch_audio_output = checked;
+        }
+    });
     connect(_ui.cbBatteryLowAlert, &QCheckBox::toggled, this, [this](bool checked) {
         if (_trigger) {
             ModifiableAccess()->battery_low_alert = checked;
@@ -518,6 +523,12 @@ QWidget *SettingsWindow::BuildAirPodsPage()
     ConfigureComboBox(_ui.cbTrayQuickConnectDevice);
     _ui.cardTrayQuickConnectDevice->SetControl(_ui.cbTrayQuickConnectDevice);
     _ui.cardTrayQuickConnectDevice->Title()->setBuddy(_ui.cbTrayQuickConnectDevice);
+
+    _ui.cardAutoSwitchAudioOutput = AddCard(layout, page, "Headphones");
+    _ui.cbAutoSwitchAudioOutput = new Widget::ToggleSwitch{_ui.cardAutoSwitchAudioOutput};
+    _ui.cbAutoSwitchAudioOutput->setObjectName("cbAutoSwitchAudioOutput");
+    _ui.cardAutoSwitchAudioOutput->SetControl(_ui.cbAutoSwitchAudioOutput);
+    _ui.cardAutoSwitchAudioOutput->Title()->setBuddy(_ui.cbAutoSwitchAudioOutput);
 
     _ui.cardBatteryLowAlert = AddCard(layout, page, "BatteryWarning");
     _ui.cbBatteryLowAlert = new Widget::ToggleSwitch{_ui.cardBatteryLowAlert};
@@ -765,12 +776,14 @@ void SettingsWindow::Retranslate()
     _ui.cardTrayQuickConnectDevice->Description()->setText(QCoreApplication::translate(
         "SettingsWindow", "The paired Bluetooth audio device a tray icon double-click connects."));
     _ui.cardTrayQuickConnectDevice->Description()->show();
+    _ui.cardAutoSwitchAudioOutput->Title()->setText(tr("Switch sound to AirPods when they connect"));
     _ui.cardBatteryLowAlert->Title()->setText(tr("Low battery warning"));
     _ui.cardBatteryChargedAlert->Title()->setText(tr("Fully charged notice"));
     for (const auto &[card, checkBox] : {
              std::pair{_ui.cardLowAudioLatency, _ui.cbLowAudioLatency},
              std::pair{_ui.cardAutoEarDetection, _ui.cbAutoEarDetection},
              std::pair{_ui.cardTrayQuickConnect, _ui.cbTrayQuickConnectEnabled},
+             std::pair{_ui.cardAutoSwitchAudioOutput, _ui.cbAutoSwitchAudioOutput},
              std::pair{_ui.cardBatteryLowAlert, _ui.cbBatteryLowAlert},
              std::pair{_ui.cardBatteryChargedAlert, _ui.cbBatteryChargedAlert},
          })
@@ -905,6 +918,9 @@ void SettingsWindow::UpdateDescriptions()
                  _ui.cardAutoEarDetection, constMetaFields.automatic_ear_detection.Description()},
              std::pair{
                  _ui.cardTrayQuickConnect, constMetaFields.tray_quick_connect_enabled.Description()},
+             std::pair{
+                 _ui.cardAutoSwitchAudioOutput,
+                 constMetaFields.auto_switch_audio_output.Description()},
              std::pair{_ui.cardBatteryLowAlert, constMetaFields.battery_low_alert.Description()},
              std::pair{
                  _ui.cardEarDetectionPauseMode,
@@ -1002,6 +1018,7 @@ void SettingsWindow::Update(const Fields &fields, bool trigger)
     _ui.cbEarDetectionPauseMode->setCurrentIndex(static_cast<int>(fields.ear_detection_pause_mode));
     _ui.cardEarDetectionPauseMode->setEnabled(fields.automatic_ear_detection);
 
+    _ui.cbAutoSwitchAudioOutput->setChecked(fields.auto_switch_audio_output);
     _ui.cbBatteryLowAlert->setChecked(fields.battery_low_alert);
     _ui.cbBatteryChargedAlert->setChecked(fields.battery_charged_alert);
 

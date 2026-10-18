@@ -210,6 +210,9 @@ Q_SIGNALS:
     void LidToggled(bool opened);
     void ScannerAvailabilityChanged(bool available);
     void DeviceConnectionChanged(bool connected);
+    // The bound device's container id (F008), empty when unbound. Emitted before its connection
+    // state, from the lookup thread.
+    void BoundDeviceContainerIdChanged(const QString &containerId);
 };
 
 std::vector<Core::Bluetooth::Device> GetDevices();

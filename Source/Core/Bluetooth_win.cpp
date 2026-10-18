@@ -104,6 +104,11 @@ winrt::hstring Device::GetAepId() const
     return GetProperty<winrt::hstring>(kPropertyAepContainerId, {});
 }
 
+QString Device::GetContainerId() const
+{
+    return QString::fromWCharArray(GetAepId().c_str());
+}
+
 void Device::RegisterHandlers()
 {
     UnregisterHandlers();

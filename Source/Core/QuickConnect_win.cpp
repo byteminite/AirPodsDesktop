@@ -33,6 +33,7 @@
 #include <QMetaObject>
 
 #include "../Logger.h"
+#include "OS/WindowsAudio.h"
 
 namespace Core::QuickConnect {
 namespace {
@@ -45,86 +46,7 @@ struct EndpointInfo {
     DWORD state{};
 };
 
-class ScopedComApartment final
-{
-public:
-    ScopedComApartment()
-    {
-        const HRESULT result = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-        _uninitialize = SUCCEEDED(result);
-        if (FAILED(result) && result != RPC_E_CHANGED_MODE) {
-            LOG(Warn, "CoInitializeEx failed. HRESULT: {:#x}", result);
-        }
-    }
-
-    ~ScopedComApartment()
-    {
-        if (_uninitialize) {
-            CoUninitialize();
-        }
-    }
-
-private:
-    bool _uninitialize{};
-};
-
-QString GuidToString(const GUID &guid)
-{
-    wchar_t buffer[39]{};
-    if (StringFromGUID2(guid, buffer, 39) == 0) {
-        return {};
-    }
-    return QString::fromWCharArray(buffer);
-}
-
-GUID ToGuid(const winrt::guid &guid)
-{
-    return {
-        guid.Data1,
-        guid.Data2,
-        guid.Data3,
-        {
-            guid.Data4[0],
-            guid.Data4[1],
-            guid.Data4[2],
-            guid.Data4[3],
-            guid.Data4[4],
-            guid.Data4[5],
-            guid.Data4[6],
-            guid.Data4[7],
-        },
-    };
-}
-
-QString NormalizeContainerId(QString id)
-{
-    id = id.trimmed();
-    if (id.startsWith('{') && id.endsWith('}')) {
-        id = id.mid(1, id.size() - 2);
-    }
-    return id.toLower();
-}
-
-QString CanonicalContainerId(const QString &id)
-{
-    const auto normalized = NormalizeContainerId(id);
-    if (normalized.isEmpty()) {
-        return {};
-    }
-    return "{" + normalized.toUpper() + "}";
-}
-
-// Container ids and MMDevice endpoint ids are stable identifiers for the user's hardware, the same
-// class of data the settings layer redacts for `device_address`. Log just enough of one to
-// correlate lines within a single session.
-QString MaskDeviceId(const QString &id)
-{
-    const auto trimmed = id.trimmed();
-    if (trimmed.isEmpty()) {
-        return "<empty>";
-    }
-    return "***" + trimmed.right(4);
-}
+using namespace OS::Windows::Audio;
 
 QString ContainerIdFromInspectable(const winrt::Windows::Foundation::IInspectable &inspectable)
 {
@@ -145,59 +67,6 @@ QString ContainerIdFromInspectable(const winrt::Windows::Foundation::IInspectabl
     }
 
     return {};
-}
-
-QString ContainerIdFromProperty(const PROPVARIANT &value)
-{
-    if (value.vt == VT_CLSID && value.puuid != nullptr) {
-        return GuidToString(*value.puuid);
-    }
-    if (value.vt == VT_LPWSTR && value.pwszVal != nullptr) {
-        return QString::fromWCharArray(value.pwszVal);
-    }
-    if (value.vt == VT_BSTR && value.bstrVal != nullptr) {
-        return QString::fromWCharArray(value.bstrVal);
-    }
-    return {};
-}
-
-OS::Windows::Com::UniquePtr<IMMDeviceEnumerator> CreateDeviceEnumerator()
-{
-    OS::Windows::Com::UniquePtr<IMMDeviceEnumerator> enumerator;
-    const HRESULT result = CoCreateInstance(
-        __uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, enumerator.GetIID(),
-        reinterpret_cast<void **>(enumerator.ReleaseAndAddressOf()));
-    if (FAILED(result)) {
-        LOG(Warn, "Create MMDeviceEnumerator failed. HRESULT: {:#x}", result);
-        return {};
-    }
-    return enumerator;
-}
-
-std::optional<QString> GetEndpointContainerId(IMMDevice &endpoint)
-{
-    OS::Windows::Com::UniquePtr<IPropertyStore> propertyStore;
-    HRESULT result = endpoint.OpenPropertyStore(STGM_READ, propertyStore.ReleaseAndAddressOf());
-    if (FAILED(result)) {
-        LOG(Warn, "Open endpoint property store failed. HRESULT: {:#x}", result);
-        return std::nullopt;
-    }
-
-    PROPVARIANT containerValue;
-    PropVariantInit(&containerValue);
-    result = propertyStore->GetValue(PKEY_Device_ContainerId, &containerValue);
-    if (FAILED(result)) {
-        LOG(Warn, "Read endpoint container id failed. HRESULT: {:#x}", result);
-        PropVariantClear(&containerValue);
-        return std::nullopt;
-    }
-
-    const auto containerId = CanonicalContainerId(ContainerIdFromProperty(containerValue));
-    PropVariantClear(&containerValue);
-    if (containerId.isEmpty()) {
-        return std::nullopt;
-    }
-    return containerId;
 }
 
 std::vector<EndpointInfo> EnumerateAudioEndpoints(std::stop_token stopToken)

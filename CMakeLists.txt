@@ -325,6 +325,7 @@ set(
     "Source/Core/AirPodsStateManager.cpp"
     "Source/Core/AppleCP.cpp"
     "Source/Core/EarDetection.cpp"
+    "Source/Core/AudioSwitchPolicy.cpp"
 )
 
 set(
@@ -384,6 +385,7 @@ if (WIN32)
         "Source/Core/Bluetooth_win.cpp"
         "Source/Core/GlobalMedia_win.cpp"
         "Source/Core/QuickConnect_win.cpp"
+        "Source/Core/AudioSwitch_win.cpp"
     )
     list(APPEND APD_APP_CODE_FILES
         "Source/Resource/Application.manifest"

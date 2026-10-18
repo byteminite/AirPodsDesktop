@@ -140,6 +140,7 @@ void Manager::OnBoundDeviceAddressChanged(uint64_t address)
     _deviceConnected = false;
     _stateMgr.Disconnect();
     emit DeviceConnectionChanged(false);
+    emit BoundDeviceContainerIdChanged({});
     QMetaObject::invokeMethod(this, [this] { StopScanner(); }, Qt::QueuedConnection);
 
     if (address == 0) {
@@ -187,6 +188,8 @@ void Manager::CompleteBoundDeviceLookup(uint64_t address, std::optional<Bluetoot
         auto name = _boundDevice->GetName();
         return name.find("Bluetooth") != std::string::npos ? std::string{} : name;
     }());
+
+    emit BoundDeviceContainerIdChanged(_boundDevice->GetContainerId());
 
     _boundDevice->CbConnectionStatusChanged() += [this](auto &&...args) {
         std::lock_guard<std::mutex> lock{_mutex};

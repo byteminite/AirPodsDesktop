@@ -306,6 +306,9 @@ void ApdApplication::ConnectGuiComponents()
     connect(
         _mainWindow.get(), &Gui::MainWindow::SilentUpdateAvailable, _trayIcon.get(),
         &Gui::TrayIcon::VersionUpdateAvailable);
+    connect(
+        _mainWindow.get(), &Gui::MainWindow::VisibilityChanged, _trayIcon.get(),
+        &Gui::TrayIcon::SetPopupVisible);
 }
 
 int ApdApplication::Run()
@@ -412,6 +415,11 @@ void ApdApplication::OnLowAudioLatencyChanged(bool enable)
 void ApdApplication::OnAutomaticEarDetectionChanged(bool enable)
 {
     _airPodsManager->OnAutomaticEarDetectionChanged(enable);
+}
+
+void ApdApplication::OnEarDetectionPauseModeChanged(Core::EarDetection::PauseMode mode)
+{
+    _airPodsManager->OnEarDetectionPauseModeChanged(mode);
 }
 
 void ApdApplication::OnRssiMinChanged(int16_t rssiMin)

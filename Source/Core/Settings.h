@@ -25,6 +25,7 @@
 #include <QLocale>
 
 #include "../Helper.h"
+#include "EarDetection.h"
 
 namespace Core::Settings {
 
@@ -48,6 +49,7 @@ public:
     virtual void OnAutoRunChanged(bool enable) = 0;
     virtual void OnLowAudioLatencyChanged(bool enable) = 0;
     virtual void OnAutomaticEarDetectionChanged(bool enable) = 0;
+    virtual void OnEarDetectionPauseModeChanged(EarDetection::PauseMode mode) = 0;
     virtual void OnRssiMinChanged(int16_t rssiMin) = 0;
     virtual void OnDeviceAddressChanged(uint64_t address) = 0;
     virtual void OnTrayIconBatteryChanged(TrayIconBatteryBehavior behavior) = 0;
@@ -85,12 +87,19 @@ void SetRepository(std::unique_ptr<Repository> repository);
         Impl::OnApply(&OnApply_tray_icon_battery))                                                 \
     callback(bool, tray_quick_connect_enabled, {false},                                            \
         Impl::OnApply(&OnApply_tray_quick_connect_enabled),                                         \
-        Impl::Desc{QT_TRANSLATE_NOOP("QObject", "A click on the tray icon connects the selected device instead of opening the main window. Double-click still opens it.")}) \
+        Impl::Desc{QT_TRANSLATE_NOOP("QObject", "Double-clicking the tray icon connects the selected device. If it is already connected, its battery is shown. A single click opens the tray menu.")}) \
     callback(QString, tray_quick_connect_device_id, {},                                             \
         Impl::OnApply(&OnApply_tray_quick_connect_device_id),                                       \
         Impl::Sensitive{})                                                                          \
     callback(TaskbarStatusBehavior, battery_on_taskbar, {TaskbarStatusBehavior::Disable},          \
-        Impl::OnApply(&OnApply_battery_on_taskbar))
+        Impl::OnApply(&OnApply_battery_on_taskbar))                                                 \
+    callback(bool, battery_low_alert, {true},                                                      \
+        Impl::Desc{QT_TRANSLATE_NOOP("QObject", "Shows a banner when an earbud drops to 20% and again at 10%.")}) \
+    callback(bool, battery_charged_alert, {true},                                                  \
+        Impl::Desc{QT_TRANSLATE_NOOP("QObject", "Shows a banner when the AirPods or the case finish charging.")}) \
+    callback(EarDetection::PauseMode, ear_detection_pause_mode, {EarDetection::PauseMode::OneEarbud}, \
+        Impl::OnApply(&OnApply_ear_detection_pause_mode),                                          \
+        Impl::Desc{QT_TRANSLATE_NOOP("QObject", "Music resumes when the earbuds go back in within 10 minutes.")})
 // clang-format on
 
 struct Fields {
@@ -252,6 +261,7 @@ void OnApply_automatic_ear_detection(const Fields &newFields);
 void OnApply_rssi_min(const Fields &newFields);
 void OnApply_device_address(const Fields &newFields);
 void OnApply_tray_icon_battery(const Fields &newFields);
+void OnApply_ear_detection_pause_mode(const Fields &newFields);
 void OnApply_tray_quick_connect_enabled(const Fields &newFields);
 void OnApply_tray_quick_connect_device_id(const Fields &newFields);
 void OnApply_battery_on_taskbar(const Fields &newFields);

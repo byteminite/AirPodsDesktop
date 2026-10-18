@@ -90,6 +90,8 @@ private:
             *cardTrayQuickConnect{}, *cardTrayQuickConnectDevice{};
         Widget::ToggleSwitch *cbAutoEarDetection{}, *cbLowAudioLatency{},
             *cbTrayQuickConnectEnabled{};
+        Widget::SettingsCard *cardBatteryLowAlert{}, *cardBatteryChargedAlert{};
+        Widget::ToggleSwitch *cbBatteryLowAlert{}, *cbBatteryChargedAlert{};
         QComboBox *cbTrayQuickConnectDevice{};
 
         // Appearance

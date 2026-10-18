@@ -90,7 +90,11 @@ void SetRepository(std::unique_ptr<Repository> repository);
         Impl::OnApply(&OnApply_tray_quick_connect_device_id),                                       \
         Impl::Sensitive{})                                                                          \
     callback(TaskbarStatusBehavior, battery_on_taskbar, {TaskbarStatusBehavior::Disable},          \
-        Impl::OnApply(&OnApply_battery_on_taskbar))
+        Impl::OnApply(&OnApply_battery_on_taskbar))                                                 \
+    callback(bool, battery_low_alert, {true},                                                      \
+        Impl::Desc{QT_TRANSLATE_NOOP("QObject", "Shows a banner when an earbud drops to 20% and again at 10%.")}) \
+    callback(bool, battery_charged_alert, {true},                                                  \
+        Impl::Desc{QT_TRANSLATE_NOOP("QObject", "Shows a banner when the AirPods or the case finish charging.")})
 // clang-format on
 
 struct Fields {

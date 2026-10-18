@@ -98,6 +98,7 @@ private:
     std::optional<IconRenderState> _lastIconRenderState;
     std::unique_ptr<QuickConnectBanner> _banner = std::make_unique<QuickConnectBanner>();
     bool _popupVisible{false};
+    BatteryAlertPolicy _batteryAlerts;
     Core::QuickConnect::Controller &_quickConnect;
     TrayActivationState _trayActivationState;
     QTimer _singleClickTimer{this};

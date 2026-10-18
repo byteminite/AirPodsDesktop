@@ -130,6 +130,15 @@ void TrayIcon::UpdateState(const Core::AirPods::State &state)
     _status = Status::Updating;
     _airPodsState = state;
     _banner->UpdateAirPods(state);
+
+    // F006: low battery warning and "fully charged" notice. The policy sees every state so its
+    // bookkeeping stays current even while a banner can't be shown.
+    const auto fields = Core::Settings::GetCurrent();
+    const auto alert =
+        _batteryAlerts.OnState(state, fields.battery_low_alert, fields.battery_charged_alert);
+    if (alert.has_value() && !_popupVisible && !UserIsBusy()) {
+        _banner->Show(BatteryAlertBannerContent(*alert, state));
+    }
     Repaint();
 }
 

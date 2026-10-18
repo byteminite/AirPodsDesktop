@@ -1325,6 +1325,123 @@ private Q_SLOTS:
         QCOMPARE(result.timer, Gui::SingleClickTimer::Unchanged);
     }
 
+    void BatteryAlertBannersRender()
+    {
+        using Alert = Gui::BatteryAlert;
+        using Kind = Gui::QuickConnectBannerContent::Kind;
+
+        Core::AirPods::State airPods;
+        airPods.model = Core::AirPods::Model::AirPods_Pro_2;
+        airPods.displayName = QStringLiteral("Miha's AirPods Pro");
+        airPods.pods.left.battery = 20;
+        airPods.pods.right.battery = 40;
+        airPods.caseBox.battery = 60;
+
+        const auto low = Gui::BatteryAlertBannerContent(
+            Alert{Alert::Kind::Low, Alert::Side::Left, 20}, airPods);
+        QCOMPARE(low.kind, Kind::LowBattery);
+        QCOMPARE(low.title, airPods.displayName);
+        QCOMPARE(low.text, QStringLiteral("Left earbud: 20%. Charge soon."));
+        QCOMPARE(
+            Gui::BatteryAlertBannerContent(Alert{Alert::Kind::Low, Alert::Side::BothPods, 10}, airPods)
+                .text,
+            QStringLiteral("Both earbuds: 10%. Charge now."));
+
+        auto full = airPods;
+        full.pods.left = {{100, true}, true};
+        full.pods.right = {{100, true}, true};
+        full.caseBox.battery = 70;
+        const auto charged = Gui::BatteryAlertBannerContent(
+            Alert{Alert::Kind::Charged, Alert::Side::BothPods, 100}, full);
+        QCOMPARE(charged.kind, Kind::Charged);
+        QCOMPARE(charged.text, QStringLiteral("AirPods fully charged"));
+        QCOMPARE(
+            Gui::BatteryAlertBannerContent(Alert{Alert::Kind::Charged, Alert::Side::Case, 100}, full)
+                .text,
+            QStringLiteral("Case fully charged"));
+
+        Gui::QuickConnectBanner banner;
+        auto *left = banner.findChild<Gui::Widget::BatteryRow *>("bannerLeftBatteryRow");
+        QVERIFY(left != nullptr);
+
+        auto &theme = Gui::Theme::Manager::Instance();
+        const auto originalMode = theme.CurrentMode();
+        const auto outputDir = QStringLiteral(APD_BINARY_DIR "/UiValidation");
+        QDir{}.mkpath(outputDir);
+        for (const auto mode : {Gui::Theme::Mode::Light, Gui::Theme::Mode::Dark}) {
+            theme.SetMode(mode);
+            for (const auto &[name, content] : {std::pair{"low", low}, std::pair{"charged", charged}}) {
+                banner.Show(content);
+                QVERIFY(QTest::qWaitForWindowExposed(&banner));
+                QTest::qWait(320);
+                QVERIFY(left->isVisible());
+                QVERIFY(banner.grab().save(
+                    QString{"%1/banner-%2-%3.png"}
+                        .arg(outputDir)
+                        .arg(name)
+                        .arg(theme.IsDark() ? "dark" : "light")));
+            }
+        }
+        // The battery rows follow live state on an alert banner too.
+        banner.Show(low);
+        auto charging = airPods;
+        charging.pods.left = {{30, true}, true};
+        banner.UpdateAirPods(charging);
+        QCOMPARE(left->Value(), std::optional<quint32>{30});
+        QVERIFY(left->IsCharging());
+        banner.Dismiss();
+        theme.SetMode(originalMode);
+    }
+
+    void TrayIconShowsBatteryAlerts()
+    {
+        if (Gui::UserIsBusy()) {
+            QSKIP("Windows reports the user busy (full screen); banners are suppressed by design.");
+        }
+        auto backend = std::make_shared<Core::QuickConnect::NullBackend>();
+        Core::QuickConnect::Controller quickConnect{backend};
+        Gui::TrayIcon tray{[] { return 0; }, quickConnect};
+
+        const auto findBanner = [] {
+            for (auto *widget : QApplication::topLevelWidgets()) {
+                if (auto *banner = qobject_cast<Gui::QuickConnectBanner *>(widget);
+                    banner != nullptr && banner->isVisible())
+                {
+                    return banner;
+                }
+            }
+            return static_cast<Gui::QuickConnectBanner *>(nullptr);
+        };
+
+        Core::AirPods::State state;
+        state.model = Core::AirPods::Model::AirPods_Pro_2;
+        state.displayName = QStringLiteral("Miha's AirPods Pro");
+        state.pods.left.battery = 30;
+        state.pods.right.battery = 50;
+        tray.UpdateState(state);
+        QVERIFY(findBanner() == nullptr);
+
+        const auto fields = Core::Settings::GetCurrent();
+        state.pods.left.battery = 20;
+        tray.UpdateState(state);
+        if (!fields.battery_low_alert) {
+            QVERIFY(findBanner() == nullptr);
+            return;
+        }
+        auto *banner = findBanner();
+        QVERIFY(banner != nullptr);
+        QCOMPARE(banner->Content()->kind, Gui::QuickConnectBannerContent::Kind::LowBattery);
+        QCOMPARE(banner->Content()->text, QStringLiteral("Left earbud: 20%. Charge soon."));
+
+        // While the popup is open, no banner appears.
+        banner->hide();
+        tray.SetPopupVisible(true);
+        state.pods.left.battery = 10;
+        tray.UpdateState(state);
+        QVERIFY(findBanner() == nullptr);
+        tray.SetPopupVisible(false);
+    }
+
     void SettingsDescriptionsFollowConsecutiveLanguageChanges()
     {
         auto backend = std::make_shared<Core::QuickConnect::NullBackend>();

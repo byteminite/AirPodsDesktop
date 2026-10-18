@@ -29,6 +29,11 @@
 #include <QScreen>
 #include <QVBoxLayout>
 
+#if defined APD_OS_WIN
+    #include <Windows.h>
+    #include <shellapi.h>
+#endif
+
 #include "FrostedBackdrop.h"
 #include "MainWindowPresentation.h"
 #include "Theme.h"
@@ -50,6 +55,26 @@ constexpr auto kWarningColor = "#FF9F0A";
 QString QuickConnectTitle()
 {
     return QCoreApplication::translate("Gui::TrayIcon", "Quick connect");
+}
+
+bool ShowsAirPods(Kind kind)
+{
+    return kind == Kind::AirPods || kind == Kind::LowBattery || kind == Kind::Charged;
+}
+
+// Lucide "zap", scaled from its 24px box.
+QPainterPath BoltPath(qreal size)
+{
+    const qreal k = size / 24.0;
+    QPainterPath path;
+    path.moveTo(13 * k, 2 * k);
+    path.lineTo(3 * k, 14 * k);
+    path.lineTo(12 * k, 14 * k);
+    path.lineTo(11 * k, 22 * k);
+    path.lineTo(21 * k, 10 * k);
+    path.lineTo(12 * k, 10 * k);
+    path.closeSubpath();
+    return path;
 }
 
 } // namespace
@@ -104,6 +129,57 @@ std::optional<QuickConnectBannerContent> QuickConnectBannerContentFor(
         return std::nullopt;
     }
     return std::nullopt;
+}
+
+QuickConnectBannerContent
+BatteryAlertBannerContent(const BatteryAlert &alert, const Core::AirPods::State &state)
+{
+    QuickConnectBannerContent content;
+    content.title = state.displayName.isEmpty() ? QStringLiteral("AirPods") : state.displayName;
+    content.airPods = state;
+
+    if (alert.kind == BatteryAlert::Kind::Charged) {
+        content.kind = Kind::Charged;
+        content.text = alert.side == BatteryAlert::Side::Case
+                           ? QCoreApplication::translate("Gui::BatteryAlerts", "Case fully charged")
+                           : QCoreApplication::translate("Gui::BatteryAlerts", "AirPods fully charged");
+        return content;
+    }
+
+    content.kind = Kind::LowBattery;
+    QString who;
+    switch (alert.side) {
+    case BatteryAlert::Side::Left:
+        who = QCoreApplication::translate("Gui::BatteryAlerts", "Left earbud");
+        break;
+    case BatteryAlert::Side::Right:
+        who = QCoreApplication::translate("Gui::BatteryAlerts", "Right earbud");
+        break;
+    default:
+        who = QCoreApplication::translate("Gui::BatteryAlerts", "Both earbuds");
+        break;
+    }
+    content.text =
+        (alert.percent <= 10
+             ? QCoreApplication::translate("Gui::BatteryAlerts", "%1: %2%. Charge now.")
+             : QCoreApplication::translate("Gui::BatteryAlerts", "%1: %2%. Charge soon."))
+            .arg(who)
+            .arg(alert.percent);
+    return content;
+}
+
+bool UserIsBusy()
+{
+#if defined APD_OS_WIN
+    QUERY_USER_NOTIFICATION_STATE state{};
+    if (FAILED(SHQueryUserNotificationState(&state))) {
+        return false;
+    }
+    return state == QUNS_BUSY || state == QUNS_RUNNING_D3D_FULL_SCREEN ||
+           state == QUNS_PRESENTATION_MODE;
+#else
+    return false;
+#endif
 }
 
 //////////////////////////////////////////////////
@@ -211,7 +287,10 @@ int QuickConnectBanner::HideDelay() const
 {
     // Problems stay up longer: unlike the Windows toast, there is no notification centre to
     // look them up in afterwards.
-    return _content.has_value() && _content->kind == Kind::Problem ? 6000 : 4000;
+    return _content.has_value() &&
+                   (_content->kind == Kind::Problem || _content->kind == Kind::LowBattery)
+               ? 6000
+               : 4000;
 }
 
 void QuickConnectBanner::Show(const QuickConnectBannerContent &content)
@@ -269,7 +348,7 @@ void QuickConnectBanner::Show(const QuickConnectBannerContent &content)
 
 void QuickConnectBanner::UpdateAirPods(const Core::AirPods::State &state)
 {
-    if (!isVisible() || !_content.has_value() || _content->kind != Kind::AirPods) {
+    if (!isVisible() || !_content.has_value() || !ShowsAirPods(_content->kind)) {
         return;
     }
     _content->airPods = state;
@@ -309,7 +388,7 @@ void QuickConnectBanner::Render()
 
     // Leading visual: the AirPods picture, or a round plate with a line icon.
     QPixmap leading;
-    if (content.kind == Kind::AirPods) {
+    if (ShowsAirPods(content.kind)) {
         const auto image =
             Widget::DevicePicture(Widget::DeviceSnapshot{Status::Updating, content.airPods});
         auto scaled = image.scaled(
@@ -347,19 +426,29 @@ void QuickConnectBanner::Render()
     _title->setToolTip(content.title);
     _text->setText(content.text);
 
-    const bool connected = content.kind != Kind::Problem;
-    _statusDot->setVisible(connected);
-    if (connected) {
-        QPixmap dot{_statusDot->size() * ratio};
-        dot.setDevicePixelRatio(ratio);
-        dot.fill(Qt::transparent);
-        QPainter painter{&dot};
+    // The status marker: a green dot when connected, a red one for low battery, a green bolt
+    // when fully charged, nothing for problems (their plate already carries the warning).
+    _statusDot->setVisible(content.kind != Kind::Problem);
+    if (content.kind != Kind::Problem) {
+        const bool bolt = content.kind == Kind::Charged;
+        const int size = bolt ? 12 : 6;
+        _statusDot->setFixedSize(size, size);
+        QPixmap marker{QSize{size, size} * ratio};
+        marker.setDevicePixelRatio(ratio);
+        marker.fill(Qt::transparent);
+        QPainter painter{&marker};
         painter.setRenderHint(QPainter::Antialiasing);
         painter.setPen(Qt::NoPen);
-        painter.setBrush(colors.batteryNormal);
-        painter.drawEllipse(QRectF{0, 0, 6, 6});
+        painter.setBrush(
+            content.kind == Kind::LowBattery ? colors.batteryAlarm : colors.batteryNormal);
+        if (bolt) {
+            painter.drawPath(BoltPath(size));
+        }
+        else {
+            painter.drawEllipse(QRectF{0, 0, 6, 6});
+        }
         painter.end();
-        _statusDot->setPixmap(dot);
+        _statusDot->setPixmap(marker);
     }
 
     auto palette = this->palette();
@@ -380,8 +469,8 @@ void QuickConnectBanner::Render()
     }
     // The rows keep their space even before the battery is known, so the banner doesn't jump
     // when the reading arrives.
-    _rows->setVisible(content.kind == Kind::AirPods);
-    if (content.kind == Kind::AirPods && content.airPods.has_value()) {
+    _rows->setVisible(ShowsAirPods(content.kind));
+    if (ShowsAirPods(content.kind) && content.airPods.has_value()) {
         ApplyBattery(*content.airPods);
     }
 

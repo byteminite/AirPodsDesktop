@@ -29,13 +29,15 @@
 
 #include "../Core/AirPods.h"
 #include "../Core/QuickConnect.h"
+#include "BatteryAlerts.h"
 #include "Widget/BatteryRow.h"
 
 namespace Gui {
 
 // What a quick-connect banner says (F005). Only results and problems produce one.
 struct QuickConnectBannerContent {
-    enum class Kind { AirPods, Device, Problem };
+    // `LowBattery` and `Charged` are the F006 battery alerts; they show the AirPods like `AirPods`.
+    enum class Kind { AirPods, Device, Problem, LowBattery, Charged };
 
     Kind kind{Kind::Problem};
     QString title;
@@ -54,6 +56,14 @@ struct QuickConnectBannerContent {
 std::optional<QuickConnectBannerContent> QuickConnectBannerContentFor(
     Core::QuickConnect::Outcome outcome, const QString &deviceName,
     const std::optional<Core::AirPods::State> &airPods);
+
+// Banner content for a battery alert (F006), e.g. "Left earbud: 20%. Charge soon."
+QuickConnectBannerContent
+BatteryAlertBannerContent(const BatteryAlert &alert, const Core::AirPods::State &state);
+
+// True while Windows reports the user busy: a full-screen game, presentation or video. Banners stay
+// away then. Always false off Windows.
+bool UserIsBusy();
 
 // A small frosted banner above the taskbar that reports a quick-connect result, in the popup's
 // visual language. It never takes focus and hides by itself; hovering keeps it up.

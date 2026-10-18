@@ -342,6 +342,7 @@ set(
     APD_PRESENTATION_CODE_FILES
 
     "Source/Gui/MainWindowPresentation.cpp"
+    "Source/Gui/BatteryAlerts.cpp"
 )
 
 set(

@@ -12,6 +12,7 @@
 #include "Source/Core/Settings.h"
 #include "Source/Core/SettingsRepository.h"
 #include "Source/Core/Update.h"
+#include "Source/Core/EarDetection.h"
 #include "Source/Gui/BatteryAlerts.h"
 #include "Source/Gui/MainWindowPresentation.h"
 #include "Source/Gui/TaskbarGeometry.h"
@@ -40,6 +41,7 @@ public:
     }
     void OnLowAudioLatencyChanged(bool) override {}
     void OnAutomaticEarDetectionChanged(bool) override {}
+    void OnEarDetectionPauseModeChanged(Core::EarDetection::PauseMode) override {}
     void OnRssiMinChanged(int16_t) override {}
     void OnDeviceAddressChanged(uint64_t) override {}
     void OnTrayIconBatteryChanged(Core::Settings::TrayIconBatteryBehavior) override {}
@@ -184,6 +186,10 @@ private Q_SLOTS:
     void WarnsOncePerBatteryThreshold();
     void ReArmsAndCombinesBatteryWarnings();
     void NoticesFullChargeOnce();
+    void EarDetectionPausesAndResumesByEarbudCount();
+    void EarDetectionBothEarbudsMode();
+    void EarDetectionResumeWindowAndGaps();
+    void LoadsEarDetectionPauseMode();
 };
 
 void AirPodsDomainTests::RejectsMalformedPackets()
@@ -891,6 +897,115 @@ void AirPodsDomainTests::NoticesFullChargeOnce()
     Gui::BatteryAlertPolicy disabled;
     QCOMPARE(disabled.OnState(BatteryState(90, 90, 50, true), true, false), std::nullopt);
     QCOMPARE(disabled.OnState(BatteryState(100, 100, 50, true), true, false), std::nullopt);
+}
+
+namespace {
+
+using EarAction = Core::EarDetection::Action;
+using Core::EarDetection::PauseMode;
+
+// Feeds in-ear readings at a time offset in seconds; nullopt means that side isn't reporting.
+struct EarDetectionDriver {
+    Core::EarDetection::Policy policy;
+    Core::EarDetection::Policy::Clock::time_point start{};
+
+    EarAction operator()(
+        std::optional<bool> left, std::optional<bool> right, int seconds,
+        PauseMode mode = PauseMode::OneEarbud)
+    {
+        return policy.OnState(left, right, mode, start + std::chrono::seconds{seconds});
+    }
+};
+
+} // namespace
+
+void AirPodsDomainTests::EarDetectionPausesAndResumesByEarbudCount()
+{
+    // Two earbuds: one out pauses, back in resumes.
+    EarDetectionDriver ears;
+    QCOMPARE(ears(true, true, 0), EarAction::None); // first reading only records
+    QCOMPARE(ears(false, true, 1), EarAction::Pause);
+    QCOMPARE(ears(true, true, 5), EarAction::Resume);
+
+    // Both out and back pauses once and resumes once, only when both are back.
+    QCOMPARE(ears(false, true, 10), EarAction::Pause);
+    QCOMPARE(ears(false, false, 11), EarAction::None);
+    QCOMPARE(ears(true, false, 12), EarAction::None);
+    QCOMPARE(ears(true, true, 13), EarAction::Resume);
+
+    // One-earbud listening (the other stays in the case): out pauses, back in resumes. The old
+    // "both in ear" rule never reacted here.
+    EarDetectionDriver single;
+    QCOMPARE(single(true, false, 0), EarAction::None);
+    QCOMPARE(single(false, false, 1), EarAction::Pause);
+    QCOMPARE(single(true, false, 4), EarAction::Resume);
+
+    // Putting earbuds in without an earlier pause doesn't start anything.
+    EarDetectionDriver fresh;
+    QCOMPARE(fresh(false, false, 0), EarAction::None);
+    QCOMPARE(fresh(true, true, 1), EarAction::None);
+}
+
+void AirPodsDomainTests::EarDetectionBothEarbudsMode()
+{
+    EarDetectionDriver ears;
+    const auto both = PauseMode::BothEarbuds;
+    QCOMPARE(ears(true, true, 0, both), EarAction::None);
+    // Taking one out (e.g. to talk) keeps playing.
+    QCOMPARE(ears(false, true, 1, both), EarAction::None);
+    QCOMPARE(ears(false, false, 2, both), EarAction::Pause);
+    // Any earbud back in resumes.
+    QCOMPARE(ears(false, true, 3, both), EarAction::Resume);
+    QCOMPARE(ears(true, true, 4, both), EarAction::None);
+}
+
+void AirPodsDomainTests::EarDetectionResumeWindowAndGaps()
+{
+    // Back in after more than 10 minutes: nothing restarts, and nothing later either.
+    EarDetectionDriver late;
+    QCOMPARE(late(true, true, 0), EarAction::None);
+    QCOMPARE(late(false, false, 1), EarAction::Pause);
+    QCOMPARE(late(true, true, 1 + 11 * 60), EarAction::Forget);
+    QCOMPARE(late(false, true, 2000), EarAction::Pause);
+    QCOMPARE(late(true, true, 2010), EarAction::Resume);
+
+    // Just inside the window still resumes.
+    EarDetectionDriver inTime;
+    QCOMPARE(inTime(true, true, 0), EarAction::None);
+    QCOMPARE(inTime(true, false, 1), EarAction::Pause);
+    QCOMPARE(inTime(true, true, 1 + 10 * 60), EarAction::Resume);
+
+    // A side that stops reporting keeps its last value: no false removal.
+    EarDetectionDriver gaps;
+    QCOMPARE(gaps(true, true, 0), EarAction::None);
+    QCOMPARE(gaps(true, std::nullopt, 1), EarAction::None);
+    QCOMPARE(gaps(std::nullopt, std::nullopt, 2), EarAction::None);
+    QCOMPARE(gaps(std::nullopt, false, 3), EarAction::Pause);
+
+    // A fresh connection while a pause waits: forget it, and the first new reading only records.
+    QCOMPARE(gaps.policy.Reset(), EarAction::Forget);
+    QCOMPARE(gaps(true, true, 4), EarAction::None);
+    QCOMPARE(gaps.policy.Reset(), EarAction::None);
+}
+
+void AirPodsDomainTests::LoadsEarDetectionPauseMode()
+{
+    // A fresh install defaults to iPhone's behaviour.
+    QCOMPARE(
+        Core::Settings::GetDefault().ear_detection_pause_mode,
+        Core::EarDetection::PauseMode::OneEarbud);
+
+    auto repository = std::make_unique<Core::Settings::MemoryRepository>();
+    repository->Write("abi_version", Core::Settings::kFieldsAbiVersion);
+    repository->Write("ear_detection_pause_mode", QString{"BothEarbuds"});
+    Core::Settings::SetRepository(std::move(repository));
+
+    QCOMPARE(Core::Settings::Load(), Core::Settings::LoadResult::Successful);
+    QCOMPARE(
+        Core::Settings::GetCurrent().ear_detection_pause_mode,
+        Core::EarDetection::PauseMode::BothEarbuds);
+
+    Core::Settings::SetRepository(Core::Settings::CreatePersistentRepository());
 }
 
 QTEST_GUILESS_MAIN(AirPodsDomainTests)

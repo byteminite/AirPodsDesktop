@@ -33,4 +33,9 @@ inline void Pause()
 {
     Controller::GetInstance().Pause();
 }
+
+inline void Forget()
+{
+    Controller::GetInstance().Forget();
+}
 } // namespace Core::GlobalMedia

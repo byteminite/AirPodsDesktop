@@ -107,6 +107,7 @@ private:
     void OnAutoRunChanged(bool enable) override;
     void OnLowAudioLatencyChanged(bool enable) override;
     void OnAutomaticEarDetectionChanged(bool enable) override;
+    void OnEarDetectionPauseModeChanged(Core::EarDetection::PauseMode mode) override;
     void OnRssiMinChanged(int16_t rssiMin) override;
     void OnDeviceAddressChanged(uint64_t address) override;
     void OnTrayIconBatteryChanged(Core::Settings::TrayIconBatteryBehavior behavior) override;

@@ -340,10 +340,20 @@ SettingsWindow::SettingsWindow(
     });
 
     connect(_ui.cbAutoEarDetection, &QCheckBox::toggled, this, [this](bool checked) {
+        _ui.cardEarDetectionPauseMode->setEnabled(checked);
         if (_trigger) {
             On_cbAutoEarDetection_toggled(checked);
         }
     });
+
+    connect(
+        _ui.cbEarDetectionPauseMode, qOverload<int>(&QComboBox::currentIndexChanged), this,
+        [this](int index) {
+            if (_trigger && index >= 0) {
+                ModifiableAccess()->ear_detection_pause_mode =
+                    static_cast<Core::EarDetection::PauseMode>(index);
+            }
+        });
 
     connect(_ui.hsMaxReceivingRange, &QSlider::valueChanged, this, [this](int value) {
         if (_trigger) {
@@ -477,6 +487,15 @@ QWidget *SettingsWindow::BuildAirPodsPage()
     _ui.cbAutoEarDetection = new Widget::ToggleSwitch{_ui.cardAutoEarDetection};
     _ui.cbAutoEarDetection->setObjectName("cbAutoEarDetection");
     _ui.cardAutoEarDetection->SetControl(_ui.cbAutoEarDetection);
+
+    _ui.cardEarDetectionPauseMode = AddCard(layout, page, nullptr);
+    _ui.cardEarDetectionPauseMode->SetSubCard(true);
+    _ui.cbEarDetectionPauseMode = new QComboBox{_ui.cardEarDetectionPauseMode};
+    _ui.cbEarDetectionPauseMode->setObjectName("cbEarDetectionPauseMode");
+    _ui.cbEarDetectionPauseMode->addItems({{}, {}});
+    ConfigureComboBox(_ui.cbEarDetectionPauseMode);
+    _ui.cardEarDetectionPauseMode->SetControl(_ui.cbEarDetectionPauseMode);
+    _ui.cardEarDetectionPauseMode->Title()->setBuddy(_ui.cbEarDetectionPauseMode);
 
     _ui.cardLowAudioLatency = AddCard(layout, page, "AudioLines");
     _ui.cardLowAudioLatency->Title()->setObjectName("lbLowAudioLatency");
@@ -732,6 +751,11 @@ void SettingsWindow::Retranslate()
     _ui.lbFeatures->setText(QCoreApplication::translate("SettingsWindow", "Features"));
     _ui.cardAutoEarDetection->Title()->setText(
         QCoreApplication::translate("SettingsWindow", "Automatic ear detection"));
+    _ui.cardEarDetectionPauseMode->Title()->setText(tr("Pause when"));
+    _ui.cbEarDetectionPauseMode->setItemText(0, tr("One earbud is removed"));
+    _ui.cbEarDetectionPauseMode->setItemText(1, tr("Both earbuds are removed"));
+    _ui.cbEarDetectionPauseMode->setAccessibleName(_ui.cardEarDetectionPauseMode->Title()->text());
+    _ui.cbEarDetectionPauseMode->adjustSize();
     _ui.cardLowAudioLatency->Title()->setText(
         QCoreApplication::translate("SettingsWindow", "Low audio latency"));
     _ui.cardTrayQuickConnect->Title()->setText(QCoreApplication::translate(
@@ -883,6 +907,9 @@ void SettingsWindow::UpdateDescriptions()
                  _ui.cardTrayQuickConnect, constMetaFields.tray_quick_connect_enabled.Description()},
              std::pair{_ui.cardBatteryLowAlert, constMetaFields.battery_low_alert.Description()},
              std::pair{
+                 _ui.cardEarDetectionPauseMode,
+                 constMetaFields.ear_detection_pause_mode.Description()},
+             std::pair{
                  _ui.cardBatteryChargedAlert, constMetaFields.battery_charged_alert.Description()},
          })
     {
@@ -972,6 +999,8 @@ void SettingsWindow::Update(const Fields &fields, bool trigger)
     _ui.cbLowAudioLatency->setChecked(fields.low_audio_latency);
 
     _ui.cbAutoEarDetection->setChecked(fields.automatic_ear_detection);
+    _ui.cbEarDetectionPauseMode->setCurrentIndex(static_cast<int>(fields.ear_detection_pause_mode));
+    _ui.cardEarDetectionPauseMode->setEnabled(fields.automatic_ear_detection);
 
     _ui.cbBatteryLowAlert->setChecked(fields.battery_low_alert);
     _ui.cbBatteryChargedAlert->setChecked(fields.battery_charged_alert);

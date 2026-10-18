@@ -119,6 +119,12 @@ void Manager::OnAutomaticEarDetectionChanged(bool enable)
     _automaticEarDetection = enable;
 }
 
+void Manager::OnEarDetectionPauseModeChanged(EarDetection::PauseMode mode)
+{
+    std::lock_guard<std::mutex> lock{_mutex};
+    _earDetectionPauseMode = mode;
+}
+
 void Manager::OnBoundDeviceAddressChanged(uint64_t address)
 {
     _deviceLookupThread.request_stop();
@@ -240,13 +246,18 @@ void Manager::OnStateChanged(Details::StateManager::UpdateEvent updateEvent)
         OnLidOpened(newLidOpened);
     }
 
-    if (oldState.has_value()) {
-        bool oldBothInEar = oldState->pods.left.isInEar && oldState->pods.right.isInEar;
-        bool newBothInEar = newState.pods.left.isInEar && newState.pods.right.isInEar;
-        if (oldBothInEar != newBothInEar) {
-            OnBothInEar(newBothInEar);
-        }
+    // F007: count earbuds in ear rather than watching "both in ear", so one-earbud listening
+    // works too. A fresh connection starts the count over. A side whose battery isn't reported
+    // isn't reporting its in-ear flag either, so it counts as "no change".
+    if (!oldState.has_value()) {
+        OnEarDetectionAction(_earDetection.Reset());
     }
+    const auto inEar = [](const PodState &pod) {
+        return pod.battery.Available() ? std::optional{pod.isInEar} : std::nullopt;
+    };
+    OnEarDetectionAction(_earDetection.OnState(
+        inEar(newState.pods.left), inEar(newState.pods.right), _earDetectionPauseMode,
+        EarDetection::Policy::Clock::now()));
 }
 
 void Manager::OnLidOpened(bool opened)
@@ -254,14 +265,24 @@ void Manager::OnLidOpened(bool opened)
     emit LidToggled(opened);
 }
 
-void Manager::OnBothInEar(bool isBothInEar)
+void Manager::OnEarDetectionAction(EarDetection::Action action)
 {
+    if (action == EarDetection::Action::None) {
+        return;
+    }
+    if (action == EarDetection::Action::Forget) {
+        // Always honoured: whatever was paused must not restart later, even with the setting off.
+        LOG(Info, "automatic_ear_detection: Resume window passed, forget paused media.");
+        GlobalMedia::Forget();
+        return;
+    }
     if (!_automaticEarDetection) {
-        LOG(Info, "automatic_ear_detection: Do nothing because it is disabled. ({})", isBothInEar);
+        LOG(Info, "automatic_ear_detection: Do nothing because it is disabled. ({})",
+            action == EarDetection::Action::Pause ? "pause" : "resume");
         return;
     }
 
-    if (isBothInEar) {
+    if (action == EarDetection::Action::Resume) {
         GlobalMedia::Play();
     }
     else {

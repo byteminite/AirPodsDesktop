@@ -417,6 +417,11 @@ void ApdApplication::OnAutomaticEarDetectionChanged(bool enable)
     _airPodsManager->OnAutomaticEarDetectionChanged(enable);
 }
 
+void ApdApplication::OnEarDetectionPauseModeChanged(Core::EarDetection::PauseMode mode)
+{
+    _airPodsManager->OnEarDetectionPauseModeChanged(mode);
+}
+
 void ApdApplication::OnRssiMinChanged(int16_t rssiMin)
 {
     _airPodsManager->OnRssiMinChanged(rssiMin);

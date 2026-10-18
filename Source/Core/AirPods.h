@@ -30,6 +30,7 @@
 #include <QObject>
 
 #include "Bluetooth.h"
+#include "EarDetection.h"
 #include "AppleCP.h"
 #include "../Helper.h"
 
@@ -172,6 +173,7 @@ public:
 
     void OnRssiMinChanged(int16_t rssiMin);
     void OnAutomaticEarDetectionChanged(bool enable);
+    void OnEarDetectionPauseModeChanged(EarDetection::PauseMode mode);
     void OnBoundDeviceAddressChanged(uint64_t address);
 
 private:
@@ -183,6 +185,8 @@ private:
     bool _deviceConnected{false};
     bool _scannerWanted{false};
     bool _automaticEarDetection{false};
+    EarDetection::PauseMode _earDetectionPauseMode{EarDetection::PauseMode::OneEarbud};
+    EarDetection::Policy _earDetection;
     uint64_t _requestedDeviceAddress{0};
     std::jthread _deviceLookupThread;
 
@@ -194,7 +198,7 @@ private:
     void OnBoundDeviceConnectionStateChanged(Bluetooth::DeviceState state);
     void OnStateChanged(Details::StateManager::UpdateEvent updateEvent);
     void OnLidOpened(bool opened);
-    void OnBothInEar(bool isBothInEar);
+    void OnEarDetectionAction(EarDetection::Action action);
     bool OnAdvertisementReceived(const Bluetooth::AdvertisementWatcher::ReceivedData &data);
     void OnAdvWatcherStateChanged(
         Bluetooth::AdvertisementWatcher::State state, const std::optional<std::string> &optError);

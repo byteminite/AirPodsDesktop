@@ -18,7 +18,9 @@
 
 #include "Application.h"
 
+#include <QDateTime>
 #include <QGuiApplication>
+#include <QSessionManager>
 #include <QMessageBox>
 #include <QStyleFactory>
 
@@ -43,6 +45,16 @@
 #include "Core/Settings.h"
 #include "Core/Update.h"
 
+#if defined APD_OS_WIN
+    #include <Windows.h>
+    #include <DbgHelp.h>
+    #pragma comment(lib, "Dbghelp.lib")
+
+    #include <csignal>
+    #include <cstdlib>
+    #include <exception>
+#endif
+
 namespace {
 
 Gui::Theme::Mode ToThemeMode(Core::Settings::AppearanceMode mode)
@@ -57,6 +69,83 @@ Gui::Theme::Mode ToThemeMode(Core::Settings::AppearanceMode mode)
     }
     return Gui::Theme::Mode::System;
 }
+
+#if defined APD_OS_WIN
+// Writes a minidump next to the log and logs the crash, then lets Windows carry on as usual. The
+// app was seen vanishing with no Windows crash report, so it keeps its own record.
+LONG WINAPI RecordCrash(EXCEPTION_POINTERS *exception)
+{
+    const auto code = exception != nullptr && exception->ExceptionRecord != nullptr
+                          ? exception->ExceptionRecord->ExceptionCode
+                          : 0;
+    const auto path = Utils::File::GetWorkspace().absoluteFilePath(
+        QString{"Crash-%1.dmp"}.arg(QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss")));
+
+    bool dumped = false;
+    const HANDLE file = CreateFileW(
+        reinterpret_cast<LPCWSTR>(path.utf16()), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file != INVALID_HANDLE_VALUE) {
+        MINIDUMP_EXCEPTION_INFORMATION info{GetCurrentThreadId(), exception, FALSE};
+        dumped = MiniDumpWriteDump(
+            GetCurrentProcess(), GetCurrentProcessId(), file, MiniDumpNormal,
+            exception != nullptr ? &info : nullptr, nullptr, nullptr);
+        CloseHandle(file);
+    }
+
+    LOG(Critical, "Crash: unhandled exception {:#x} on thread {}. Dump: {}", code,
+        GetCurrentThreadId(), dumped ? path.toStdString() : std::string{"not written"});
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+// Serious faults are logged the moment they are raised, before anything can swallow them or reset
+// the unhandled-exception filter (some libraries do). Only fault codes that end a process are
+// logged, so ordinary handled C++ exceptions don't flood the log.
+LONG WINAPI LogFatalFault(EXCEPTION_POINTERS *exception)
+{
+    const auto code = exception->ExceptionRecord->ExceptionCode;
+    switch (code) {
+    case EXCEPTION_ACCESS_VIOLATION:
+    case EXCEPTION_STACK_OVERFLOW:
+    case EXCEPTION_ILLEGAL_INSTRUCTION:
+    case EXCEPTION_INT_DIVIDE_BY_ZERO:
+    case 0xC0000374: // STATUS_HEAP_CORRUPTION
+    case 0xC0000409: // STATUS_STACK_BUFFER_OVERRUN
+        LOG(Critical, "Fault {:#x} at {} on thread {}.", code,
+            exception->ExceptionRecord->ExceptionAddress, GetCurrentThreadId());
+        break;
+    default:
+        break;
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+void InstallCrashRecorder()
+{
+    SetUnhandledExceptionFilter(RecordCrash);
+    AddVectoredExceptionHandler(0, LogFatalFault);
+    // MSVC keeps the terminate handler per thread, but SIGABRT, invalid-parameter and pure-call
+    // handlers are process-wide, so these also cover worker threads (Bluetooth, audio, lookups).
+    std::set_terminate([] {
+        LOG(Critical, "Crash: std::terminate was called (an exception escaped).");
+        std::abort();
+    });
+    signal(SIGABRT, [](int) {
+        LOG(Critical, "Crash: abort() on thread {} (often an exception escaping a worker thread).",
+            GetCurrentThreadId());
+        RecordCrash(nullptr);
+    });
+    _set_invalid_parameter_handler(
+        [](const wchar_t *, const wchar_t *, const wchar_t *, unsigned int, uintptr_t) {
+            LOG(Critical, "Crash: invalid parameter passed to a C runtime function.");
+        });
+    _set_purecall_handler([] {
+        LOG(Critical, "Crash: pure virtual function call.");
+        RecordCrash(nullptr);
+        std::abort();
+    });
+}
+#endif
 
 } // namespace
 
@@ -180,6 +269,17 @@ bool ApdApplication::Prepare(int argc, char *argv[])
     setWindowIcon(QIcon{Config::QrcIconSvg});
     setQuitOnLastWindowClosed(false);
 
+    connect(this, &QCoreApplication::aboutToQuit, this, [] {
+        LOG(Info, "Application is quitting.");
+    });
+    // Windows signing out or shutting down ends the app without `aboutToQuit`.
+    connect(this, &QGuiApplication::commitDataRequest, this, [](QSessionManager &) {
+        LOG(Info, "Windows is ending the session.");
+    });
+#if defined APD_OS_WIN
+    InstallCrashRecorder();
+#endif
+
     connect(this, &ApdApplication::SetTranslatorSafely, this, &ApdApplication::SetTranslator);
 
 #if defined APD_OS_WIN
@@ -210,6 +310,7 @@ bool ApdApplication::Prepare(int argc, char *argv[])
     _mainWindow = std::make_unique<Gui::MainWindow>();
     _mainWindow->StartUpdateChecks();
     _lowAudioLatencyController = std::make_unique<Core::LowAudioLatency::Controller>();
+    _audioSwitcher = std::make_unique<Core::AudioSwitch::Switcher>();
     _autoStartService = Core::AutoStart::CreateAutoStartService();
     _airPodsManager = std::make_unique<Core::AirPods::Manager>(this);
 
@@ -274,6 +375,26 @@ void ApdApplication::ConnectAirPodsManager()
     connect(
         manager, &Core::AirPods::Manager::DeviceConnectionChanged, _lowAudioLatencyController.get(),
         &Core::LowAudioLatency::Controller::SetDeviceConnectedSafely);
+
+    // F008: move the default sound output to the AirPods while they're connected.
+    auto *audioSwitcher = _audioSwitcher.get();
+    connect(
+        manager, &Core::AirPods::Manager::BoundDeviceContainerIdChanged, audioSwitcher,
+        [audioSwitcher](const QString &containerId) {
+            audioSwitcher->SetBoundContainerId(containerId);
+        });
+    connect(
+        manager, &Core::AirPods::Manager::DeviceConnectionChanged, audioSwitcher,
+        [audioSwitcher](bool connected) { audioSwitcher->SetDeviceConnected(connected); });
+    // The low-latency silence stream opened on the old default output; reopen it on the new one.
+    // Off then on works the same in every version of the controller.
+    connect(
+        audioSwitcher, &Core::AudioSwitch::Switcher::DefaultOutputSwitched, this, [this] {
+            if (Core::Settings::GetCurrent().low_audio_latency) {
+                _lowAudioLatencyController->ControlSafely(false);
+                _lowAudioLatencyController->ControlSafely(true);
+            }
+        });
     connect(manager, &Core::AirPods::Manager::LidToggled, mainWindow, [mainWindow](bool opened) {
         if (opened) {
             emit mainWindow->ShowSafely();
@@ -306,6 +427,9 @@ void ApdApplication::ConnectGuiComponents()
     connect(
         _mainWindow.get(), &Gui::MainWindow::SilentUpdateAvailable, _trayIcon.get(),
         &Gui::TrayIcon::VersionUpdateAvailable);
+    connect(
+        _mainWindow.get(), &Gui::MainWindow::VisibilityChanged, _trayIcon.get(),
+        &Gui::TrayIcon::SetPopupVisible);
 }
 
 int ApdApplication::Run()
@@ -412,6 +536,16 @@ void ApdApplication::OnLowAudioLatencyChanged(bool enable)
 void ApdApplication::OnAutomaticEarDetectionChanged(bool enable)
 {
     _airPodsManager->OnAutomaticEarDetectionChanged(enable);
+}
+
+void ApdApplication::OnEarDetectionPauseModeChanged(Core::EarDetection::PauseMode mode)
+{
+    _airPodsManager->OnEarDetectionPauseModeChanged(mode);
+}
+
+void ApdApplication::OnAutoSwitchAudioOutputChanged(bool enable)
+{
+    _audioSwitcher->SetEnabled(enable);
 }
 
 void ApdApplication::OnRssiMinChanged(int16_t rssiMin)

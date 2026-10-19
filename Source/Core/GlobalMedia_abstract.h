@@ -30,5 +30,7 @@ public:
 
     virtual void Play() = 0;
     virtual void Pause() = 0;
+    // Drops the players paused by `Pause`, so a later `Play` resumes nothing.
+    virtual void Forget() = 0;
 };
 } // namespace Core::GlobalMedia::Details

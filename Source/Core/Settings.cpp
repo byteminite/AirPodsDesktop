@@ -123,6 +123,25 @@ void OnApply_device_address(const Fields &newFields)
     });
 }
 
+void OnApply_ear_detection_pause_mode(const Fields &newFields)
+{
+    LOG(Info, "OnApply_ear_detection_pause_mode: {}",
+        magic_enum::enum_name(newFields.ear_detection_pause_mode));
+
+    Impl::NotifyApplyObserver([&](ApplyObserver &observer) {
+        observer.OnEarDetectionPauseModeChanged(newFields.ear_detection_pause_mode);
+    });
+}
+
+void OnApply_auto_switch_audio_output(const Fields &newFields)
+{
+    LOG(Info, "OnApply_auto_switch_audio_output: {}", newFields.auto_switch_audio_output);
+
+    Impl::NotifyApplyObserver([&](ApplyObserver &observer) {
+        observer.OnAutoSwitchAudioOutputChanged(newFields.auto_switch_audio_output);
+    });
+}
+
 void OnApply_tray_icon_battery(const Fields &newFields)
 {
     LOG(Info, "OnApply_tray_icon_battery: {}", newFields.tray_icon_battery);

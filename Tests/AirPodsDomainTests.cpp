@@ -12,6 +12,9 @@
 #include "Source/Core/Settings.h"
 #include "Source/Core/SettingsRepository.h"
 #include "Source/Core/Update.h"
+#include "Source/Core/AudioSwitchPolicy.h"
+#include "Source/Core/EarDetection.h"
+#include "Source/Gui/BatteryAlerts.h"
 #include "Source/Gui/MainWindowPresentation.h"
 #include "Source/Gui/TaskbarGeometry.h"
 
@@ -39,6 +42,8 @@ public:
     }
     void OnLowAudioLatencyChanged(bool) override {}
     void OnAutomaticEarDetectionChanged(bool) override {}
+    void OnEarDetectionPauseModeChanged(Core::EarDetection::PauseMode) override {}
+    void OnAutoSwitchAudioOutputChanged(bool) override {}
     void OnRssiMinChanged(int16_t) override {}
     void OnDeviceAddressChanged(uint64_t) override {}
     void OnTrayIconBatteryChanged(Core::Settings::TrayIconBatteryBehavior) override {}
@@ -180,6 +185,15 @@ private Q_SLOTS:
     void PresentsMainWindowCaseBattery();
     void MapsMainWindowAnimationResources();
     void ConvertsTaskbarGeometryAcrossDpiBoundaries();
+    void WarnsOncePerBatteryThreshold();
+    void ReArmsAndCombinesBatteryWarnings();
+    void NoticesFullChargeOnce();
+    void EarDetectionPausesAndResumesByEarbudCount();
+    void EarDetectionBothEarbudsMode();
+    void EarDetectionResumeWindowAndGaps();
+    void LoadsEarDetectionPauseMode();
+    void SwitchesOutputToAirPodsAndBack();
+    void AudioSwitchRespectsUserChoices();
 };
 
 void AirPodsDomainTests::RejectsMalformedPackets()
@@ -771,6 +785,294 @@ void AirPodsDomainTests::ConvertsTaskbarGeometryAcrossDpiBoundaries()
         Gui::TaskbarGeometry::CalculateLayout(QSize{50, 1440}, QRect{0, 120, 50, 1270}, 120, false);
     QCOMPARE(vertical.statusLogical, QRect(0, 1112, 40, 40));
     QCOMPARE(vertical.taskButtonsNative, QRect(0, 120, 50, 1270));
+}
+
+namespace {
+
+using Alert = Gui::BatteryAlert;
+
+// A state with the given readings; nullopt means that side isn't reporting.
+Core::AirPods::State BatteryState(
+    std::optional<uint32_t> left, std::optional<uint32_t> right, std::optional<uint32_t> caseBox = {},
+    bool podsCharging = false, bool caseCharging = false)
+{
+    Core::AirPods::State state;
+    state.model = Core::AirPods::Model::AirPods_Pro_2;
+    if (left) {
+        state.pods.left.battery = *left;
+        state.pods.left.isCharging = podsCharging;
+    }
+    if (right) {
+        state.pods.right.battery = *right;
+        state.pods.right.isCharging = podsCharging;
+    }
+    if (caseBox) {
+        state.caseBox.battery = *caseBox;
+        state.caseBox.isCharging = caseCharging;
+    }
+    return state;
+}
+
+std::optional<Alert> Low(Alert::Side side, uint32_t percent)
+{
+    return Alert{Alert::Kind::Low, side, percent};
+}
+
+} // namespace
+
+void AirPodsDomainTests::WarnsOncePerBatteryThreshold()
+{
+    Gui::BatteryAlertPolicy policy;
+    QCOMPARE(policy.OnState(BatteryState(40, 50), true, true), std::nullopt);
+    QCOMPARE(policy.OnState(BatteryState(30, 50), true, true), std::nullopt);
+    QCOMPARE(policy.OnState(BatteryState(20, 50), true, true), Low(Alert::Side::Left, 20));
+    QCOMPARE(policy.OnState(BatteryState(20, 50), true, true), std::nullopt);
+    QCOMPARE(policy.OnState(BatteryState(10, 50), true, true), Low(Alert::Side::Left, 10));
+    QCOMPARE(policy.OnState(BatteryState(10, 50), true, true), std::nullopt);
+
+    // A missing reading (the earbud stopped reporting) changes nothing, and a reconnect at the
+    // same level doesn't replay the warning.
+    QCOMPARE(policy.OnState(BatteryState(std::nullopt, std::nullopt), true, true), std::nullopt);
+    QCOMPARE(policy.OnState(BatteryState(10, 50), true, true), std::nullopt);
+
+    // The case never gets a low warning.
+    QCOMPARE(policy.OnState(BatteryState(10, 50, 10), true, true), std::nullopt);
+
+    // Connecting with an earbud already low warns straight away, once, at the lowest level.
+    Gui::BatteryAlertPolicy fresh;
+    QCOMPARE(fresh.OnState(BatteryState(50, 10), true, true), Low(Alert::Side::Right, 10));
+    QCOMPARE(fresh.OnState(BatteryState(50, 10), true, true), std::nullopt);
+}
+
+void AirPodsDomainTests::ReArmsAndCombinesBatteryWarnings()
+{
+    Gui::BatteryAlertPolicy policy;
+    QCOMPARE(policy.OnState(BatteryState(10, 50), true, true), Low(Alert::Side::Left, 10));
+
+    // One-step flapping between 10% and 20% never repeats a warning.
+    QCOMPARE(policy.OnState(BatteryState(20, 50), true, true), std::nullopt);
+    QCOMPARE(policy.OnState(BatteryState(10, 50), true, true), std::nullopt);
+
+    // Two steps above re-arms the 10% warning (but not yet the 20% one).
+    QCOMPARE(policy.OnState(BatteryState(30, 50), true, true), std::nullopt);
+    QCOMPARE(policy.OnState(BatteryState(10, 50), true, true), Low(Alert::Side::Left, 10));
+
+    // Charging re-arms everything; a warning never fires while charging.
+    QCOMPARE(policy.OnState(BatteryState(10, 10, std::nullopt, true), true, true), std::nullopt);
+    QCOMPARE(policy.OnState(BatteryState(20, 20, std::nullopt, true), true, true), std::nullopt);
+
+    // Both earbuds crossing in one reading give a single alert.
+    QCOMPARE(policy.OnState(BatteryState(20, 20), true, true), Low(Alert::Side::BothPods, 20));
+
+    // A disabled warning still tracks, so enabling it later doesn't replay the crossing.
+    Gui::BatteryAlertPolicy quiet;
+    QCOMPARE(quiet.OnState(BatteryState(20, 50), false, true), std::nullopt);
+    QCOMPARE(quiet.OnState(BatteryState(20, 50), true, true), std::nullopt);
+    QCOMPARE(quiet.OnState(BatteryState(10, 50), true, true), Low(Alert::Side::Left, 10));
+}
+
+void AirPodsDomainTests::NoticesFullChargeOnce()
+{
+    const auto charged = [](Alert::Side side) {
+        return std::optional{Alert{Alert::Kind::Charged, side, 100}};
+    };
+
+    // A first reading that is already full stays silent.
+    Gui::BatteryAlertPolicy policy;
+    QCOMPARE(policy.OnState(BatteryState(100, 100, 60, true, true), true, true), std::nullopt);
+
+    Gui::BatteryAlertPolicy charging;
+    QCOMPARE(charging.OnState(BatteryState(90, 100, 60, true, true), true, true), std::nullopt);
+    QCOMPARE(
+        charging.OnState(BatteryState(100, 100, 60, true, true), true, true),
+        charged(Alert::Side::BothPods));
+    QCOMPARE(charging.OnState(BatteryState(100, 100, 60, true, true), true, true), std::nullopt);
+
+    // The case's own 100% counts too.
+    QCOMPARE(charging.OnState(BatteryState(100, 100, 90, true, true), true, true), std::nullopt);
+    QCOMPARE(
+        charging.OnState(BatteryState(100, 100, 100, true, true), true, true),
+        charged(Alert::Side::Case));
+
+    // Full but not charging (taken out of the case) is no notice; neither when it is disabled.
+    Gui::BatteryAlertPolicy unplugged;
+    QCOMPARE(unplugged.OnState(BatteryState(90, 90), true, true), std::nullopt);
+    QCOMPARE(unplugged.OnState(BatteryState(100, 100), true, true), std::nullopt);
+    Gui::BatteryAlertPolicy disabled;
+    QCOMPARE(disabled.OnState(BatteryState(90, 90, 50, true), true, false), std::nullopt);
+    QCOMPARE(disabled.OnState(BatteryState(100, 100, 50, true), true, false), std::nullopt);
+}
+
+namespace {
+
+using EarAction = Core::EarDetection::Action;
+using Core::EarDetection::PauseMode;
+
+// Feeds in-ear readings at a time offset in seconds; nullopt means that side isn't reporting.
+struct EarDetectionDriver {
+    Core::EarDetection::Policy policy;
+    Core::EarDetection::Policy::Clock::time_point start{};
+
+    EarAction operator()(
+        std::optional<bool> left, std::optional<bool> right, int seconds,
+        PauseMode mode = PauseMode::OneEarbud)
+    {
+        return policy.OnState(left, right, mode, start + std::chrono::seconds{seconds});
+    }
+};
+
+} // namespace
+
+void AirPodsDomainTests::EarDetectionPausesAndResumesByEarbudCount()
+{
+    // Two earbuds: one out pauses, back in resumes.
+    EarDetectionDriver ears;
+    QCOMPARE(ears(true, true, 0), EarAction::None); // first reading only records
+    QCOMPARE(ears(false, true, 1), EarAction::Pause);
+    QCOMPARE(ears(true, true, 5), EarAction::Resume);
+
+    // Both out and back pauses once and resumes once, only when both are back.
+    QCOMPARE(ears(false, true, 10), EarAction::Pause);
+    QCOMPARE(ears(false, false, 11), EarAction::None);
+    QCOMPARE(ears(true, false, 12), EarAction::None);
+    QCOMPARE(ears(true, true, 13), EarAction::Resume);
+
+    // One-earbud listening (the other stays in the case): out pauses, back in resumes. The old
+    // "both in ear" rule never reacted here.
+    EarDetectionDriver single;
+    QCOMPARE(single(true, false, 0), EarAction::None);
+    QCOMPARE(single(false, false, 1), EarAction::Pause);
+    QCOMPARE(single(true, false, 4), EarAction::Resume);
+
+    // Putting earbuds in without an earlier pause doesn't start anything.
+    EarDetectionDriver fresh;
+    QCOMPARE(fresh(false, false, 0), EarAction::None);
+    QCOMPARE(fresh(true, true, 1), EarAction::None);
+}
+
+void AirPodsDomainTests::EarDetectionBothEarbudsMode()
+{
+    EarDetectionDriver ears;
+    const auto both = PauseMode::BothEarbuds;
+    QCOMPARE(ears(true, true, 0, both), EarAction::None);
+    // Taking one out (e.g. to talk) keeps playing.
+    QCOMPARE(ears(false, true, 1, both), EarAction::None);
+    QCOMPARE(ears(false, false, 2, both), EarAction::Pause);
+    // Any earbud back in resumes.
+    QCOMPARE(ears(false, true, 3, both), EarAction::Resume);
+    QCOMPARE(ears(true, true, 4, both), EarAction::None);
+}
+
+void AirPodsDomainTests::EarDetectionResumeWindowAndGaps()
+{
+    // Back in after more than 10 minutes: nothing restarts, and nothing later either.
+    EarDetectionDriver late;
+    QCOMPARE(late(true, true, 0), EarAction::None);
+    QCOMPARE(late(false, false, 1), EarAction::Pause);
+    QCOMPARE(late(true, true, 1 + 11 * 60), EarAction::Forget);
+    QCOMPARE(late(false, true, 2000), EarAction::Pause);
+    QCOMPARE(late(true, true, 2010), EarAction::Resume);
+
+    // Just inside the window still resumes.
+    EarDetectionDriver inTime;
+    QCOMPARE(inTime(true, true, 0), EarAction::None);
+    QCOMPARE(inTime(true, false, 1), EarAction::Pause);
+    QCOMPARE(inTime(true, true, 1 + 10 * 60), EarAction::Resume);
+
+    // A side that stops reporting keeps its last value: no false removal.
+    EarDetectionDriver gaps;
+    QCOMPARE(gaps(true, true, 0), EarAction::None);
+    QCOMPARE(gaps(true, std::nullopt, 1), EarAction::None);
+    QCOMPARE(gaps(std::nullopt, std::nullopt, 2), EarAction::None);
+    QCOMPARE(gaps(std::nullopt, false, 3), EarAction::Pause);
+
+    // A fresh connection while a pause waits: forget it, and the first new reading only records.
+    QCOMPARE(gaps.policy.Reset(), EarAction::Forget);
+    QCOMPARE(gaps(true, true, 4), EarAction::None);
+    QCOMPARE(gaps.policy.Reset(), EarAction::None);
+}
+
+void AirPodsDomainTests::LoadsEarDetectionPauseMode()
+{
+    // A fresh install defaults to iPhone's behaviour.
+    QCOMPARE(
+        Core::Settings::GetDefault().ear_detection_pause_mode,
+        Core::EarDetection::PauseMode::OneEarbud);
+
+    auto repository = std::make_unique<Core::Settings::MemoryRepository>();
+    repository->Write("abi_version", Core::Settings::kFieldsAbiVersion);
+    repository->Write("ear_detection_pause_mode", QString{"BothEarbuds"});
+    Core::Settings::SetRepository(std::move(repository));
+
+    QCOMPARE(Core::Settings::Load(), Core::Settings::LoadResult::Successful);
+    QCOMPARE(
+        Core::Settings::GetCurrent().ear_detection_pause_mode,
+        Core::EarDetection::PauseMode::BothEarbuds);
+
+    Core::Settings::SetRepository(Core::Settings::CreatePersistentRepository());
+}
+
+void AirPodsDomainTests::SwitchesOutputToAirPodsAndBack()
+{
+    const QString speakers{"speakers"}, airPods{"airpods"};
+    Core::AudioSwitch::Policy policy;
+
+    policy.OnConnected();
+    QCOMPARE(policy.OnAirPodsReady(airPods, speakers, true), std::optional{airPods});
+    QCOMPARE(policy.Previous(), std::optional{speakers});
+    // The endpoint flapping later in the same connection doesn't switch again.
+    QCOMPARE(policy.OnAirPodsReady(airPods, airPods, true), std::nullopt);
+    // Our own switch reported back isn't a user choice.
+    policy.OnDefaultChanged(airPods, true);
+    // Windows falling back once the AirPods endpoint is gone isn't one either.
+    policy.OnDefaultChanged(QStringLiteral("monitor"), false);
+    QCOMPARE(policy.OnDisconnected(QStringLiteral("monitor"), true), std::optional{speakers});
+
+    // A new connection remembers the right "previous".
+    policy.OnConnected();
+    QCOMPARE(policy.OnAirPodsReady(airPods, QStringLiteral("monitor"), true), std::optional{airPods});
+    QCOMPARE(policy.OnDisconnected(airPods, true), std::optional{QStringLiteral("monitor")});
+
+    // Already the default (Windows switched by itself): nothing to do, nothing to restore.
+    policy.OnConnected();
+    QCOMPARE(policy.OnAirPodsReady(airPods, airPods, true), std::nullopt);
+    QCOMPARE(policy.OnDisconnected(speakers, true), std::nullopt);
+
+    // Windows already put the previous output back: nothing to do.
+    policy.OnConnected();
+    QCOMPARE(policy.OnAirPodsReady(airPods, speakers, true), std::optional{airPods});
+    QCOMPARE(policy.OnDisconnected(speakers, true), std::nullopt);
+}
+
+void AirPodsDomainTests::AudioSwitchRespectsUserChoices()
+{
+    const QString speakers{"speakers"}, airPods{"airpods"};
+
+    // Turned off: never switches, never restores.
+    Core::AudioSwitch::Policy off;
+    off.OnConnected();
+    QCOMPARE(off.OnAirPodsReady(airPods, speakers, false), std::nullopt);
+    QCOMPARE(off.OnDisconnected(QStringLiteral("monitor"), true), std::nullopt);
+
+    // The user picks another output while connected: not undone on reconnecting endpoints, and
+    // not restored over on disconnect.
+    Core::AudioSwitch::Policy picked;
+    picked.OnConnected();
+    QCOMPARE(picked.OnAirPodsReady(airPods, speakers, true), std::optional{airPods});
+    picked.OnDefaultChanged(QStringLiteral("monitor"), true);
+    QCOMPARE(picked.OnAirPodsReady(airPods, QStringLiteral("monitor"), true), std::nullopt);
+    QCOMPARE(picked.OnDisconnected(QStringLiteral("monitor"), true), std::nullopt);
+
+    // The previous output was unplugged meanwhile: nothing to restore to.
+    Core::AudioSwitch::Policy gone;
+    gone.OnConnected();
+    QCOMPARE(gone.OnAirPodsReady(airPods, speakers, true), std::optional{airPods});
+    QCOMPARE(gone.OnDisconnected(QStringLiteral("monitor"), false), std::nullopt);
+
+    // Disconnect without ever switching (endpoint never ready): nothing to restore.
+    Core::AudioSwitch::Policy never;
+    never.OnConnected();
+    QCOMPARE(never.OnDisconnected(QStringLiteral("monitor"), true), std::nullopt);
 }
 
 QTEST_GUILESS_MAIN(AirPodsDomainTests)

@@ -41,7 +41,15 @@ QStringList DisplayFontFamilies(const QLocale &locale);
 void ApplyApplicationTypography(const QLocale &locale);
 
 // Configure before the popup is first shown so its rounded surface can use per-pixel alpha.
+// Menus get the shared solid rounded surface painted for them unless they set
+// `kCustomSurfaceProperty` to `true` first and paint their own.
 void ConfigurePopupSurface(QWidget *popup);
+constexpr auto kCustomSurfaceProperty = "apdCustomSurface";
+
+// Puts Windows 11's Mica material behind a framed window that has `WA_TranslucentBackground` set,
+// extending it under the title bar. Returns false where the system has no Mica (before Windows 11
+// 22H2), so the caller keeps painting a solid background.
+bool EnableMicaBackdrop(QWidget *window);
 
 //
 // Colour tokens for the whole application.
@@ -60,9 +68,15 @@ struct Palette {
     QColor popupSurface, popupBorder;
 
     // Main window (iOS card)
-    QColor mainSurface, mainText, mainTextSecondary;
+    // `mainGlassTint` is painted over the popup's frosted snapshot of the desktop behind it;
+    // `mainSurface` is the opaque fallback when no snapshot is available.
+    QColor mainSurface, mainGlassTint, mainText, mainTextSecondary;
     QColor mainCloseBg, mainCloseHover, mainClosePressed, mainCloseGlyph;
-    QColor batteryBorder, batteryNormal, batteryAlarm;
+    QColor batteryBorder, batteryNormal, batteryAlarm, batteryTrack;
+
+    // F002: the popup's own "Bind to AirPods" button uses Apple's system blue rather than the
+    // Windows accent colour the rest of the app follows.
+    QColor mainAccentBg, mainAccentBgHover, mainAccentBgPressed, mainAccentText;
 
     bool operator==(const Palette &) const = default;
 };

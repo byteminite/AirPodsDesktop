@@ -29,6 +29,8 @@
 #include <winrt/Windows.Devices.Bluetooth.Advertisement.h>
 #include <winrt/Windows.Networking.h>
 
+#include <QString>
+
 #include "Bluetooth_abstract.h"
 #include "OS/Windows.h"
 
@@ -57,6 +59,8 @@ public:
     uint16_t GetVendorId() const override;
     uint16_t GetProductId() const override;
     DeviceState GetConnectionState() const override;
+    // The device container id that also tags the device's Windows sound endpoints (F008).
+    QString GetContainerId() const;
 
 private:
     constexpr static auto kPropertyBluetoothVendorId = L"System.DeviceInterface.Bluetooth.VendorId";

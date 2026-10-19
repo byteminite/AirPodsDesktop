@@ -76,6 +76,7 @@ protected:
 public:
     void Play() override;
     void Pause() override;
+    void Forget() override;
 
 private:
     std::mutex _mutex;

@@ -50,6 +50,8 @@
     #include <DbgHelp.h>
     #pragma comment(lib, "Dbghelp.lib")
 
+    #include <csignal>
+    #include <cstdlib>
     #include <exception>
 #endif
 
@@ -96,11 +98,50 @@ LONG WINAPI RecordCrash(EXCEPTION_POINTERS *exception)
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
+// Serious faults are logged the moment they are raised, before anything can swallow them or reset
+// the unhandled-exception filter (some libraries do). Only fault codes that end a process are
+// logged, so ordinary handled C++ exceptions don't flood the log.
+LONG WINAPI LogFatalFault(EXCEPTION_POINTERS *exception)
+{
+    const auto code = exception->ExceptionRecord->ExceptionCode;
+    switch (code) {
+    case EXCEPTION_ACCESS_VIOLATION:
+    case EXCEPTION_STACK_OVERFLOW:
+    case EXCEPTION_ILLEGAL_INSTRUCTION:
+    case EXCEPTION_INT_DIVIDE_BY_ZERO:
+    case 0xC0000374: // STATUS_HEAP_CORRUPTION
+    case 0xC0000409: // STATUS_STACK_BUFFER_OVERRUN
+        LOG(Critical, "Fault {:#x} at {} on thread {}.", code,
+            exception->ExceptionRecord->ExceptionAddress, GetCurrentThreadId());
+        break;
+    default:
+        break;
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
 void InstallCrashRecorder()
 {
     SetUnhandledExceptionFilter(RecordCrash);
+    AddVectoredExceptionHandler(0, LogFatalFault);
+    // MSVC keeps the terminate handler per thread, but SIGABRT, invalid-parameter and pure-call
+    // handlers are process-wide, so these also cover worker threads (Bluetooth, audio, lookups).
     std::set_terminate([] {
         LOG(Critical, "Crash: std::terminate was called (an exception escaped).");
+        std::abort();
+    });
+    signal(SIGABRT, [](int) {
+        LOG(Critical, "Crash: abort() on thread {} (often an exception escaping a worker thread).",
+            GetCurrentThreadId());
+        RecordCrash(nullptr);
+    });
+    _set_invalid_parameter_handler(
+        [](const wchar_t *, const wchar_t *, const wchar_t *, unsigned int, uintptr_t) {
+            LOG(Critical, "Crash: invalid parameter passed to a C runtime function.");
+        });
+    _set_purecall_handler([] {
+        LOG(Critical, "Crash: pure virtual function call.");
+        RecordCrash(nullptr);
         std::abort();
     });
 }

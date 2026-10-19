@@ -36,6 +36,7 @@
 #include "Source/Gui/Theme.h"
 #include "Source/Gui/TrayActivation.h"
 #include "Source/Gui/TrayIcon.h"
+#include "Source/Gui/TrayMenu.h"
 #include "Source/Gui/UpdateWindow.h"
 #include "Source/Gui/Widget/BatteryRow.h"
 #include "Source/Gui/Widget/DeviceCard.h"
@@ -1440,6 +1441,27 @@ private Q_SLOTS:
         tray.UpdateState(state);
         QVERIFY(findBanner() == nullptr);
         tray.SetPopupVisible(false);
+    }
+
+    void TrayMenuIgnoresTheSecondClickOfASlowDoubleClick()
+    {
+        Gui::TrayMenu menu;
+        auto *item = menu.addAction(QStringLiteral("Quit stand-in"));
+        QSignalSpy triggered{item, &QAction::triggered};
+
+        menu.popup(QPoint{200, 200});
+        QVERIFY(QTest::qWaitForWindowExposed(&menu));
+        const auto center = menu.actionGeometry(item).center();
+
+        // Right after opening: the click is the tail of a double click, not a choice.
+        QTest::mouseClick(&menu, Qt::LeftButton, {}, center);
+        QCOMPARE(triggered.count(), 0);
+        QVERIFY(menu.isVisible());
+
+        // A deliberate click a moment later works as usual.
+        QTest::qWait(QApplication::doubleClickInterval() + 50);
+        QTest::mouseClick(&menu, Qt::LeftButton, {}, center);
+        QCOMPARE(triggered.count(), 1);
     }
 
     void SettingsDescriptionsFollowConsecutiveLanguageChanges()

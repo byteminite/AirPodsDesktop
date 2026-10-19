@@ -19,6 +19,7 @@
 #pragma once
 
 #include <QImage>
+#include <QElapsedTimer>
 #include <QMenu>
 
 namespace Gui {
@@ -42,9 +43,11 @@ protected:
     void showEvent(QShowEvent *event) override;
     void hideEvent(QHideEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
 
 private:
     QImage _backdrop;
+    QElapsedTimer _shownFor;
 };
 
 } // namespace Gui

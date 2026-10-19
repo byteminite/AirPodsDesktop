@@ -21,10 +21,13 @@
 #include <algorithm>
 
 #include <QGuiApplication>
+#include <QMouseEvent>
+#include <QApplication>
 #include <QPainter>
 #include <QPainterPath>
 #include <QScreen>
 
+#include "../Logger.h"
 #include "FrostedBackdrop.h"
 #include "Theme.h"
 #include "TintedSvg.h"
@@ -114,7 +117,21 @@ void TrayMenu::showEvent(QShowEvent *event)
             _backdrop = FrostBackdrop(shot.toImage());
         }
     }
+    _shownFor.start();
     QMenu::showEvent(event);
+}
+
+void TrayMenu::mouseReleaseEvent(QMouseEvent *event)
+{
+    // A tray single click opens this menu right where the user clicked. If they meant to double
+    // click but were a little slow, the second click arrives just after the menu opened and would
+    // land on the item under the cursor, the bottom one: Quit. Ignore clicks for that long.
+    if (_shownFor.isValid() && _shownFor.elapsed() < QApplication::doubleClickInterval()) {
+        LOG(Info, "TrayMenu: Ignored a click {} ms after opening.", _shownFor.elapsed());
+        event->accept();
+        return;
+    }
+    QMenu::mouseReleaseEvent(event);
 }
 
 void TrayMenu::hideEvent(QHideEvent *event)

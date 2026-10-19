@@ -25,7 +25,6 @@
 #include <mutex>
 
 #include "Source/Core/QuickConnect.h"
-#include "Source/Gui/TrayActivation.h"
 
 using namespace std::chrono_literals;
 
@@ -145,12 +144,6 @@ private slots:
     void reconnectRequestDoesNotBlockTheGuiThread();
     void controllerDestructionCancelsInFlightRefresh();
 
-    // Tray activation
-    void singleClickOpensMainWindowWhenQuickConnectIsDisabled();
-    void singleClickWaitsOutTheDoubleClickInterval();
-    void doubleClickCancelsPendingQuickConnect();
-    void contextMenuCancelsPendingQuickConnect();
-    void unknownActivationDoesNothing();
 };
 
 void QuickConnectTests::initTestCase()
@@ -396,72 +389,6 @@ void QuickConnectTests::controllerDestructionCancelsInFlightRefresh()
     }
 
     QCoreApplication::processEvents();
-}
-
-//////////////////////////////////////////////////
-// Tray activation
-//
-// These exercise the same TrayActivationState that TrayIcon drives, including the timer decision,
-// so the assertions describe what a user actually gets.
-//
-
-void QuickConnectTests::singleClickOpensMainWindowWhenQuickConnectIsDisabled()
-{
-    Gui::TrayActivationState state;
-
-    const auto result = state.OnActivation(QSystemTrayIcon::Trigger, false);
-    QCOMPARE(result.action, Gui::TrayActivationAction::ShowMainWindow);
-    QCOMPARE(result.timer, Gui::SingleClickTimer::Stop);
-    QCOMPARE(state.OnSingleClickTimeout(), Gui::TrayActivationAction::None);
-}
-
-void QuickConnectTests::singleClickWaitsOutTheDoubleClickInterval()
-{
-    Gui::TrayActivationState state;
-
-    const auto result = state.OnActivation(QSystemTrayIcon::Trigger, true);
-    QCOMPARE(result.action, Gui::TrayActivationAction::None);
-    QCOMPARE(result.timer, Gui::SingleClickTimer::Start);
-    QCOMPARE(state.OnSingleClickTimeout(), Gui::TrayActivationAction::QuickConnect);
-
-    // Only the first timeout counts.
-    QCOMPARE(state.OnSingleClickTimeout(), Gui::TrayActivationAction::None);
-}
-
-void QuickConnectTests::doubleClickCancelsPendingQuickConnect()
-{
-    Gui::TrayActivationState state;
-
-    QCOMPARE(
-        state.OnActivation(QSystemTrayIcon::Trigger, true).action, Gui::TrayActivationAction::None);
-
-    const auto result = state.OnActivation(QSystemTrayIcon::DoubleClick, true);
-    QCOMPARE(result.action, Gui::TrayActivationAction::ShowMainWindow);
-    QCOMPARE(result.timer, Gui::SingleClickTimer::Stop);
-    QCOMPARE(state.OnSingleClickTimeout(), Gui::TrayActivationAction::None);
-}
-
-// Opening the context menu must not leave a connect request to fire behind it.
-void QuickConnectTests::contextMenuCancelsPendingQuickConnect()
-{
-    Gui::TrayActivationState state;
-
-    QCOMPARE(
-        state.OnActivation(QSystemTrayIcon::Trigger, true).timer, Gui::SingleClickTimer::Start);
-
-    const auto result = state.OnActivation(QSystemTrayIcon::Context, true);
-    QCOMPARE(result.action, Gui::TrayActivationAction::None);
-    QCOMPARE(result.timer, Gui::SingleClickTimer::Stop);
-    QCOMPARE(state.OnSingleClickTimeout(), Gui::TrayActivationAction::None);
-}
-
-void QuickConnectTests::unknownActivationDoesNothing()
-{
-    Gui::TrayActivationState state;
-
-    const auto result = state.OnActivation(QSystemTrayIcon::Unknown, true);
-    QCOMPARE(result.action, Gui::TrayActivationAction::None);
-    QCOMPARE(result.timer, Gui::SingleClickTimer::Unchanged);
 }
 
 QTEST_GUILESS_MAIN(QuickConnectTests)

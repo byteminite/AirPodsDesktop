@@ -24,6 +24,7 @@
 #include <QLocale>
 #include <QTranslator>
 
+#include "Core/AudioSwitch.h"
 #include "Core/Settings.h"
 #include "Opts.h"
 
@@ -91,6 +92,7 @@ private:
     std::unique_ptr<Gui::MainWindow> _mainWindow;
     std::unique_ptr<Core::AirPods::Manager> _airPodsManager;
     std::unique_ptr<Core::LowAudioLatency::Controller> _lowAudioLatencyController;
+    std::unique_ptr<Core::AudioSwitch::Switcher> _audioSwitcher;
     std::unique_ptr<Core::AutoStart::Service> _autoStartService;
 
     void InitSettings(Core::Settings::LoadResult loadResult);
@@ -107,6 +109,8 @@ private:
     void OnAutoRunChanged(bool enable) override;
     void OnLowAudioLatencyChanged(bool enable) override;
     void OnAutomaticEarDetectionChanged(bool enable) override;
+    void OnEarDetectionPauseModeChanged(Core::EarDetection::PauseMode mode) override;
+    void OnAutoSwitchAudioOutputChanged(bool enable) override;
     void OnRssiMinChanged(int16_t rssiMin) override;
     void OnDeviceAddressChanged(uint64_t address) override;
     void OnTrayIconBatteryChanged(Core::Settings::TrayIconBatteryBehavior behavior) override;

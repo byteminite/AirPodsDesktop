@@ -210,6 +210,7 @@ bool ApdApplication::Prepare(int argc, char *argv[])
     _mainWindow = std::make_unique<Gui::MainWindow>();
     _mainWindow->StartUpdateChecks();
     _lowAudioLatencyController = std::make_unique<Core::LowAudioLatency::Controller>();
+    _audioSwitcher = std::make_unique<Core::AudioSwitch::Switcher>();
     _autoStartService = Core::AutoStart::CreateAutoStartService();
     _airPodsManager = std::make_unique<Core::AirPods::Manager>(this);
 
@@ -274,6 +275,26 @@ void ApdApplication::ConnectAirPodsManager()
     connect(
         manager, &Core::AirPods::Manager::DeviceConnectionChanged, _lowAudioLatencyController.get(),
         &Core::LowAudioLatency::Controller::SetDeviceConnectedSafely);
+
+    // F008: move the default sound output to the AirPods while they're connected.
+    auto *audioSwitcher = _audioSwitcher.get();
+    connect(
+        manager, &Core::AirPods::Manager::BoundDeviceContainerIdChanged, audioSwitcher,
+        [audioSwitcher](const QString &containerId) {
+            audioSwitcher->SetBoundContainerId(containerId);
+        });
+    connect(
+        manager, &Core::AirPods::Manager::DeviceConnectionChanged, audioSwitcher,
+        [audioSwitcher](bool connected) { audioSwitcher->SetDeviceConnected(connected); });
+    // The low-latency silence stream opened on the old default output; reopen it on the new one.
+    // Off then on works the same in every version of the controller.
+    connect(
+        audioSwitcher, &Core::AudioSwitch::Switcher::DefaultOutputSwitched, this, [this] {
+            if (Core::Settings::GetCurrent().low_audio_latency) {
+                _lowAudioLatencyController->ControlSafely(false);
+                _lowAudioLatencyController->ControlSafely(true);
+            }
+        });
     connect(manager, &Core::AirPods::Manager::LidToggled, mainWindow, [mainWindow](bool opened) {
         if (opened) {
             emit mainWindow->ShowSafely();
@@ -306,6 +327,9 @@ void ApdApplication::ConnectGuiComponents()
     connect(
         _mainWindow.get(), &Gui::MainWindow::SilentUpdateAvailable, _trayIcon.get(),
         &Gui::TrayIcon::VersionUpdateAvailable);
+    connect(
+        _mainWindow.get(), &Gui::MainWindow::VisibilityChanged, _trayIcon.get(),
+        &Gui::TrayIcon::SetPopupVisible);
 }
 
 int ApdApplication::Run()
@@ -412,6 +436,16 @@ void ApdApplication::OnLowAudioLatencyChanged(bool enable)
 void ApdApplication::OnAutomaticEarDetectionChanged(bool enable)
 {
     _airPodsManager->OnAutomaticEarDetectionChanged(enable);
+}
+
+void ApdApplication::OnEarDetectionPauseModeChanged(Core::EarDetection::PauseMode mode)
+{
+    _airPodsManager->OnEarDetectionPauseModeChanged(mode);
+}
+
+void ApdApplication::OnAutoSwitchAudioOutputChanged(bool enable)
+{
+    _audioSwitcher->SetEnabled(enable);
 }
 
 void ApdApplication::OnRssiMinChanged(int16_t rssiMin)

@@ -548,4 +548,11 @@ void Controller::Pause()
         }
     }
 }
+
+void Controller::Forget()
+{
+    std::lock_guard<std::mutex> lock{_mutex};
+    LOG(Trace, L"Forget {} paused program(s).", _pausedPrograms.size());
+    _pausedPrograms.clear();
+}
 } // namespace Core::GlobalMedia

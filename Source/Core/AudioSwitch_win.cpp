@@ -193,7 +193,10 @@ public:
         _readyTimer.setInterval(kReadyPollInterval);
         connect(&_readyTimer, &QTimer::timeout, this, [this] {
             if (++_attempts >= kReadyPollAttempts) {
-                LOG(Info, "AudioSwitch: The AirPods' stereo output didn't become ready; giving up.");
+                LOG(Info,
+                    "AudioSwitch: The AirPods' stereo output didn't become ready; giving up. "
+                    "(container id known: {}, matching endpoints seen: {})",
+                    !_containerId.isEmpty(), _lastMatchingEndpoints);
                 _readyTimer.stop();
             }
             TryAirPodsReady();
@@ -261,6 +264,8 @@ private:
     QString _airPodsId;
     QTimer _readyTimer{this};
     int _attempts{0};
+    // Active render endpoints sharing the AirPods' container in the last scan, for diagnostics.
+    int _lastMatchingEndpoints{0};
 
     void OnEndpointsChanged()
     {
@@ -316,6 +321,7 @@ private:
         collection->GetCount(&count);
 
         std::optional<QString> fallback;
+        _lastMatchingEndpoints = 0;
         for (UINT i = 0; i < count; ++i) {
             OS::Windows::Com::UniquePtr<IMMDevice> endpoint;
             if (FAILED(collection->Item(i, endpoint.ReleaseAndAddressOf()))) {
@@ -324,6 +330,7 @@ private:
             if (GetEndpointContainerId(*endpoint.operator->()) != _containerId) {
                 continue;
             }
+            ++_lastMatchingEndpoints;
             const auto formFactor = GetFormFactor(*endpoint.operator->());
             if (formFactor == kFormFactorHeadphones) {
                 return EndpointId(*endpoint.operator->());

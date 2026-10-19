@@ -106,7 +106,15 @@ winrt::hstring Device::GetAepId() const
 
 QString Device::GetContainerId() const
 {
-    return QString::fromWCharArray(GetAepId().c_str());
+    // Windows boxes this property as a GUID; read the text form too, as QuickConnect does.
+    if (const auto text = GetAepId(); !text.empty()) {
+        return QString::fromWCharArray(text.c_str());
+    }
+    const auto guid = GetProperty<winrt::guid>(kPropertyAepContainerId, winrt::guid{});
+    if (guid == winrt::guid{}) {
+        return {};
+    }
+    return QString::fromWCharArray(winrt::to_hstring(guid).c_str());
 }
 
 void Device::RegisterHandlers()
